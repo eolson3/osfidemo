@@ -1,6 +1,8 @@
 import datetime as dt
 from pathlib import Path
 
+import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 import streamlit as st
 
@@ -81,7 +83,6 @@ PREPRINTS_CSV = DATA_DIR / "2025-12-04_preprints-search-results.csv"
 @st.cache_data
 def load_users(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
-    # sanity check, but don't hard fail
     expected = {
         "report_yearmonth",
         "account_creation_date",
@@ -134,7 +135,7 @@ except Exception as e:
 
 
 # =====================================================
-# SMALL HELPERS
+# HELPERS
 # =====================================================
 
 def fmt(value, default="—", fmt_str="{:,}"):
@@ -220,7 +221,6 @@ with st.sidebar:
 # HEADER
 # =====================================================
 
-# We’ll compute the "global" month from all users_raw for header only
 global_summary = compute_summary_metrics(
     users_raw, projects_raw, regs_raw, preprints_raw
 )
@@ -250,252 +250,200 @@ st.markdown(
 
 
 # =====================================================
-# SUMMARY TAB (with its own filters)
+# SUMMARY TAB (all chart rows)
 # =====================================================
 
 if page == "Summary":
-    st.subheader("Summary (snapshot counts)")
+    st.subheader("Summary")
 
-    # --- Filters for summary ---
-    st.markdown("##### Filters (Summary tab)")
-    fcol1, fcol2, fcol3 = st.columns([2, 2, 2])
+    summary = compute_summary_metrics(
+        users_raw, projects_raw, regs_raw, preprints_raw
+    )
 
-    with fcol1:
-        summary_search = st.text_input(
-            "Search (user name / title contains)",
-            value="",
-            key="summary_search",
-        ).strip()
+    # ----- Metric cards -----
+    r1c1, r1c2, r1c3, r1c4 = st.columns(4)
+    r2c1, r2c2, r2c3, r2c4 = st.columns(4)
 
-    with fcol2:
-        dept_options = (
-            sorted(users_raw["department"].dropna().unique().tolist())
-            if "department" in users_raw.columns
-            else []
+    # Row 1
+    r1c1.metric("Total Users", fmt(summary["total_users"]))
+    r1c2.metric("Total Monthly Logged in Users", fmt(summary["monthly_logged_in"]))
+    r1c3.metric("Total Monthly Active Users", fmt(summary["monthly_active"]))
+    r1c4.metric(
+        "OSF Public and Private Projects",
+        fmt(summary["total_projects"]),
+    )
+
+    # Row 2
+    r2c1.metric(
+        "OSF Public and Embargoed Registrations",
+        fmt(summary["total_regs"]),
+    )
+    r2c2.metric("OSF Preprints", fmt(summary["total_preprints"]))
+    r2c3.metric("Total Public File Count", fmt(summary["total_files"]))
+    r2c4.metric(
+        "Total Storage in GB",
+        fmt(summary["total_storage_gb"], fmt_str="{:,.1f}"),
+    )
+
+    st.markdown("---")
+
+    # ----- Chart helpers -----
+    def donut_chart(labels, values, title: str):
+        if not len(values) or sum(values) == 0:
+            st.info(f"No data available for **{title}**.")
+            return
+
+        fig, ax = plt.subplots()
+        wedges, _ = ax.pie(
+            values,
+            startangle=90,
+            wedgeprops=dict(width=0.4),
         )
-        if dept_options:
-            summary_depts = st.multiselect(
-                "Department (Users)",
-                options=dept_options,
-                default=dept_options,
-                key="summary_depts",
-            )
-        else:
-            summary_depts = []
+        ax.set_aspect("equal")
+        ax.set_title(title)
+        ax.legend(
+            wedges,
+            [f"{l} ({v:,})" for l, v in zip(labels, values)],
+            loc="center left",
+            bbox_to_anchor=(1, 0.5),
+        )
+        st.pyplot(fig)
 
-    with fcol3:
-        if "orcid_id" in users_raw.columns:
-            summary_orcid = st.selectbox(
-                "ORCID (Users)",
-                ["All", "Has ORCID", "No ORCID"],
-                index=0,
-                key="summary_orcid",
-            )
-        else:
-            summary_orcid = "All"
+    def bar_chart_from_series(series: pd.Series, title: str, top_n: int = 10):
+        series = series.dropna().sort_values(ascending=False).head(top_n)
+        if series.empty:
+            st.info(f"No data available for **{title}**.")
+            return
+        st.markdown(f"**{title}**")
+        st.bar_chart(series)
 
-    # License & storage filters for content
-    fcol4, fcol5 = st.columns(2)
-    with fcol4:
-        license_values = set()
+    # ---------- Row A: Users / Projects / Registrations ----------
+    a1, a2, a3 = st.columns(3)
+
+    with a1:
+        st.markdown("#### Total Users by Department")
+        if "department" in users_raw.columns:
+            dept_counts = (
+                users_raw["department"]
+                .fillna("Unknown")
+                .value_counts()
+            )
+            labels = dept_counts.index.tolist()
+            values = dept_counts.values.tolist()
+        else:
+            labels, values = [], []
+        donut_chart(labels, values, title="Total Users by Department")
+
+    with a2:
+        st.markdown("#### Public vs Private Projects")
+        proj_labels, proj_values = [], []
+        if "visibility" in projects_raw.columns:
+            vis_counts = (
+                projects_raw["visibility"]
+                .fillna("Unknown")
+                .value_counts()
+            )
+            proj_labels = vis_counts.index.tolist()
+            proj_values = vis_counts.values.tolist()
+        donut_chart(proj_labels, proj_values, title="Public vs Private Projects")
+
+    with a3:
+        st.markdown("#### Public vs Embargoed Registrations")
+        reg_labels, reg_values = [], []
+        if "visibility" in regs_raw.columns:
+            reg_vis = (
+                regs_raw["visibility"]
+                .fillna("Unknown")
+                .value_counts()
+            )
+            reg_labels = reg_vis.index.tolist()
+            reg_values = reg_vis.values.tolist()
+        donut_chart(reg_labels, reg_values, title="Public vs Embargoed Registrations")
+
+    # ---------- Row B: Total objects / licenses / add-ons ----------
+    b1, b2, b3 = st.columns(3)
+
+    with b1:
+        labels = []
+        values = []
+        if summary["total_projects"] is not None:
+            labels.append("Projects")
+            values.append(summary["total_projects"])
+        if summary["total_regs"] is not None:
+            labels.append("Registrations")
+            values.append(summary["total_regs"])
+        if summary["total_preprints"] is not None:
+            labels.append("Preprints")
+            values.append(summary["total_preprints"])
+        if summary["total_files"] is not None:
+            labels.append("Files")
+            values.append(summary["total_files"])
+
+        st.markdown("#### Total OSF Objects")
+        donut_chart(labels, values, title="Total OSF Objects")
+
+    with b2:
+        all_licenses = []
         for df_ in (projects_raw, regs_raw, preprints_raw):
             if "rights.name" in df_.columns:
-                license_values.update(df_["rights.name"].dropna().unique().tolist())
-        license_options = sorted(license_values)
-        if license_options:
-            summary_licenses = st.multiselect(
-                "License (content tabs)",
-                options=license_options,
-                default=license_options,
-                key="summary_licenses",
-            )
+                all_licenses.append(df_["rights.name"])
+        if all_licenses:
+            license_series = pd.concat(all_licenses, ignore_index=True).value_counts()
         else:
-            summary_licenses = []
+            license_series = pd.Series(dtype=int)
+        bar_chart_from_series(license_series, "Top 10 Licenses")
 
-    with fcol5:
-        region_values = set()
+    with b3:
+        addons_counts = None
+        try:
+            addons_csv = DATA_DIR / "summary_addons.csv"
+            if addons_csv.exists():
+                df_addons = pd.read_csv(addons_csv)
+                if {"addon", "count"} <= set(df_addons.columns):
+                    addons_counts = (
+                        df_addons.set_index("addon")["count"].astype(int)
+                    )
+        except Exception:
+            addons_counts = None
+
+        if addons_counts is None:
+            if "hasOsfAddon.prefLabel" in projects_raw.columns:
+                addons_counts = (
+                    projects_raw["hasOsfAddon.prefLabel"]
+                    .dropna()
+                    .value_counts()
+                )
+            else:
+                addons_counts = pd.Series(dtype=int)
+
+        bar_chart_from_series(addons_counts, "Top 10 Add-ons")
+
+    # ---------- Row C: Top Storage Regions ----------
+    c1, _, _ = st.columns([1.2, 1, 1])
+
+    with c1:
+        region_series_parts = []
         for df_ in (projects_raw, regs_raw):
             if "storageRegion.prefLabel" in df_.columns:
-                region_values.update(
-                    df_["storageRegion.prefLabel"].dropna().unique().tolist()
-                )
-        region_options = sorted(region_values)
-        if region_options:
-            summary_regions = st.multiselect(
-                "Storage region (Projects/Regs)",
-                options=region_options,
-                default=region_options,
-                key="summary_regions",
+                region_series_parts.append(df_["storageRegion.prefLabel"])
+        if region_series_parts:
+            region_counts = (
+                pd.concat(region_series_parts, ignore_index=True)
+                .dropna()
+                .value_counts()
             )
         else:
-            summary_regions = []
+            region_counts = pd.Series(dtype=int)
 
-    # --- Apply filters for summary metrics and charts ---
+        labels = region_counts.index.tolist()
+        values = region_counts.values.tolist()
 
-    # Users
-    users = users_raw.copy()
-    if summary_depts:
-        users = users[users["department"].isin(summary_depts)]
-    if summary_orcid != "All" and "orcid_id" in users.columns:
-        if summary_orcid == "Has ORCID":
-            users = users[
-                users["orcid_id"].notna()
-                & (users["orcid_id"].astype(str).str.strip() != "")
-            ]
-        else:
-            users = users[
-                users["orcid_id"].isna()
-                | (users["orcid_id"].astype(str).str.strip() == "")
-            ]
-    if summary_search:
-        users = users[
-            users["user_name"]
-            .astype(str)
-            .str.contains(summary_search, case=False, na=False)
-        ]
-
-    # Projects
-    projects = projects_raw.copy()
-    if summary_licenses and "rights.name" in projects.columns:
-        projects = projects[
-            projects["rights.name"].isin(summary_licenses)
-            | projects["rights.name"].isna()
-        ]
-    if summary_regions and "storageRegion.prefLabel" in projects.columns:
-        projects = projects[
-            projects["storageRegion.prefLabel"].isin(summary_regions)
-            | projects["storageRegion.prefLabel"].isna()
-        ]
-    if summary_search and "title" in projects.columns:
-        projects = projects[
-            projects["title"].astype(str).str.contains(summary_search, case=False, na=False)
-        ]
-
-    # Registrations
-    regs = regs_raw.copy()
-    if summary_licenses and "rights.name" in regs.columns:
-        regs = regs[
-            regs["rights.name"].isin(summary_licenses)
-            | regs["rights.name"].isna()
-        ]
-    if summary_regions and "storageRegion.prefLabel" in regs.columns:
-        regs = regs[
-            regs["storageRegion.prefLabel"].isin(summary_regions)
-            | regs["storageRegion.prefLabel"].isna()
-        ]
-    if summary_search and "title" in regs.columns:
-        regs = regs[
-            regs["title"].astype(str).str.contains(summary_search, case=False, na=False)
-        ]
-
-    # Preprints
-    preprints = preprints_raw.copy()
-    if summary_licenses and "rights.name" in preprints.columns:
-        preprints = preprints[
-            preprints["rights.name"].isin(summary_licenses)
-            | preprints["rights.name"].isna()
-        ]
-    if summary_search and "title" in preprints.columns:
-        preprints = preprints[
-            preprints["title"].astype(str).str.contains(summary_search, case=False, na=False)
-        ]
-
-    summary = compute_summary_metrics(users, projects, regs, preprints)
-
-    st.caption(
-        f"Current Summary filters → Users: {len(users):,} · "
-        f"Projects: {len(projects):,} · Registrations: {len(regs):,} · "
-        f"Preprints: {len(preprints):,}"
-    )
-
-    # Cards
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Total users", fmt(summary["total_users"]))
-    c2.metric(
-        "Total monthly logged in users",
-        fmt(summary["monthly_logged_in"]),
-    )
-    c3.metric(
-        "Total monthly active users",
-        fmt(summary["monthly_active"]),
-    )
-    orcid_pct = (
-        (summary["has_orcid"] / summary["total_users"] * 100)
-        if summary["has_orcid"] is not None and summary["total_users"]
-        else None
-    )
-    c4.metric(
-        "Users with ORCID (%)",
-        fmt(orcid_pct, fmt_str="{:,.1f}%"),
-    )
-
-    c5, c6, c7, c8 = st.columns(4)
-    c5.metric("OSF projects (rows)", fmt(summary["total_projects"]))
-    c6.metric("OSF registrations (rows)", fmt(summary["total_regs"]))
-    c7.metric("OSF preprints (rows)", fmt(summary["total_preprints"]))
-    c8.metric("Total public file count", fmt(summary["total_files"]))
-
-    c9, c10 = st.columns(2)
-    c9.metric(
-        "Total storage on OSF (GB)",
-        fmt(summary["total_storage_gb"], fmt_str="{:,.2f}"),
-    )
-    c10.metric(" ", " ")  # spacer
-
-    st.markdown("### Visualization snapshots")
-
-    # Users by department
-    st.markdown("#### Users by department")
-    if "department" in users.columns:
-        dept_counts = (
-            users["department"].fillna("Unknown").value_counts().sort_values(ascending=False)
-        )
-        st.bar_chart(dept_counts)
-    else:
-        st.info("No department column in users CSV.")
-
-    # Projects by storage region
-    st.markdown("#### Projects by storage region")
-    if "storageRegion.prefLabel" in projects.columns:
-        proj_region = (
-            projects["storageRegion.prefLabel"]
-            .fillna("Unknown")
-            .value_counts()
-            .sort_values(ascending=False)
-        )
-        st.bar_chart(proj_region)
-    else:
-        st.info("No storageRegion.prefLabel column in projects CSV.")
-
-    # Registrations by schema
-    st.markdown("#### Registrations by registration schema")
-    if "conformsTo.title" in regs.columns:
-        schema_counts = (
-            regs["conformsTo.title"]
-            .fillna("Unknown")
-            .value_counts()
-            .sort_values(ascending=False)
-        )
-        st.bar_chart(schema_counts)
-    else:
-        st.info("No conformsTo.title column in registrations CSV.")
-
-    # Preprints by license
-    st.markdown("#### Preprints by license")
-    if "rights.name" in preprints.columns:
-        license_counts = (
-            preprints["rights.name"]
-            .fillna("Unknown")
-            .value_counts()
-            .sort_values(ascending=False)
-        )
-        st.bar_chart(license_counts)
-    else:
-        st.info("No rights.name column in preprints CSV.")
+        st.markdown("#### Top Storage Regions")
+        donut_chart(labels, values, title="Top Storage Regions")
 
 
 # =====================================================
-# USERS TAB (with its own filters)
+# USERS TAB (inline filters)
 # =====================================================
 
 elif page == "Users":
@@ -614,334 +562,604 @@ elif page == "Users":
 
 
 # =====================================================
-# PROJECTS TAB (with its own filters)
+# PROJECTS TAB (drawer filters, AND creators)
 # =====================================================
 
 elif page == "Projects":
     st.subheader("Projects")
 
-    st.markdown("##### Filters (Projects tab)")
-    pcol1, pcol2, pcol3 = st.columns([2, 2, 2])
+    if "projects_show_filters" not in st.session_state:
+        st.session_state["projects_show_filters"] = True
 
-    with pcol1:
-        projects_search = st.text_input(
-            "Search projects (title contains)",
-            value="",
-            key="projects_search",
-        ).strip()
-    with pcol2:
-        license_options = (
-            sorted(
-                projects_raw["rights.name"].dropna().unique().tolist()
-            )
-            if "rights.name" in projects_raw.columns
-            else []
-        )
-        if license_options:
-            projects_licenses = st.multiselect(
-                "License",
-                options=license_options,
-                default=license_options,
-                key="projects_licenses",
-            )
-        else:
-            projects_licenses = []
-    with pcol3:
-        region_options = (
-            sorted(
-                projects_raw["storageRegion.prefLabel"].dropna().unique().tolist()
-            )
-            if "storageRegion.prefLabel" in projects_raw.columns
-            else []
-        )
-        if region_options:
-            projects_regions = st.multiselect(
-                "Storage region",
-                options=region_options,
-                default=region_options,
-                key="projects_regions",
-            )
-        else:
-            projects_regions = []
-
-    projects = projects_raw.copy()
-    if projects_licenses and "rights.name" in projects.columns:
-        projects = projects[
-            projects["rights.name"].isin(projects_licenses)
-            | projects["rights.name"].isna()
-        ]
-    if projects_regions and "storageRegion.prefLabel" in projects.columns:
-        projects = projects[
-            projects["storageRegion.prefLabel"].isin(projects_regions)
-            | projects["storageRegion.prefLabel"].isna()
-        ]
-    if projects_search and "title" in projects.columns:
-        projects = projects[
-            projects["title"].astype(str).str.contains(projects_search, case=False, na=False)
+    def toggle_projects_filters():
+        st.session_state["projects_show_filters"] = not st.session_state[
+            "projects_show_filters"
         ]
 
-    if projects.empty:
-        st.info("No projects match the current filters.")
+    top_left, top_filters, top_customize = st.columns([6, 1, 1])
+
+    with top_left:
+        st.markdown(f"**{len(projects_raw):,} Total Projects**")
+
+    with top_filters:
+        st.button("Filters", on_click=toggle_projects_filters, use_container_width=True)
+
+    with top_customize:
+        st.button("Customize", disabled=True, use_container_width=True)
+
+    show_filters = st.session_state["projects_show_filters"]
+
+    if show_filters:
+        main_col, filter_col = st.columns([4, 2])
     else:
-        df = projects.copy()
-        if "storageByteCount" in df.columns:
-            df["Total data stored on OSF (GB)"] = df["storageByteCount"] / 1e9
+        main_col = st.container()
+        filter_col = None
 
-        display = df.rename(
-            columns={
-                "title": "Title",
-                "@id": "OSF Link",
-                "dateCreated": "Created date",
-                "dateModified": "Modified date",
-                "sameAs": "DOI",
-                "storageRegion.prefLabel": "Storage region",
-                "creator.name": "Creator(s)",
-                "usage.viewCount": "Views (last 30 days)",
-                "resourceNature.displayLabel": "Resource type",
-                "rights.name": "License",
-                "hasOsfAddon.prefLabel": "Add-ons",
-                "funder.name": "Funder name",
-            }
-        )
+    creators_selected = None
+    date_start = None
+    date_end = None
+    licenses_selected = None
+    regions_selected = None
 
-        cols = [
-            "Title",
-            "Created date",
-            "Modified date",
-            "DOI",
-            "Storage region",
-            "Total data stored on OSF (GB)",
-            "Creator(s)",
-            "Views (last 30 days)",
-            "Resource type",
-            "License",
-            "Add-ons",
-            "Funder name",
-            "OSF Link",
+    if filter_col is not None:
+        with filter_col:
+            st.markdown("#### Filter By")
+
+            # Creator (AND semantics)
+            with st.expander("Creator", expanded=False):
+                if "creator.name" in projects_raw.columns:
+                    creator_options = sorted(
+                        projects_raw["creator.name"].dropna().unique().tolist()
+                    )
+                    creators_selected = st.multiselect(
+                        "Creator",
+                        options=creator_options,
+                        default=creator_options,
+                        key="projects_creator_filter",
+                    )
+                else:
+                    st.caption("No creator.name column in projects CSV.")
+
+            # Date created
+            with st.expander("Date created", expanded=False):
+                if "dateCreated" in projects_raw.columns:
+                    dates = pd.to_datetime(
+                        projects_raw["dateCreated"], errors="coerce"
+                    )
+                    if not dates.isna().all():
+                        min_date, max_date = dates.min().date(), dates.max().date()
+                        date_range = st.date_input(
+                            "Created between",
+                            value=(min_date, max_date),
+                            min_value=min_date,
+                            max_value=max_date,
+                            key="projects_date_filter",
+                        )
+                        if isinstance(date_range, (list, tuple)):
+                            date_start, date_end = date_range
+                    else:
+                        st.caption("dateCreated values could not be parsed.")
+                else:
+                    st.caption("No dateCreated column in CSV.")
+
+            # License
+            with st.expander("License", expanded=False):
+                if "rights.name" in projects_raw.columns:
+                    license_options = sorted(
+                        projects_raw["rights.name"].dropna().unique().tolist()
+                    )
+                    licenses_selected = st.multiselect(
+                        "License",
+                        options=license_options,
+                        default=license_options,
+                        key="projects_license_filter",
+                    )
+                else:
+                    st.caption("No rights.name column in CSV.")
+
+            # Storage region
+            with st.expander("Storage region", expanded=False):
+                if "storageRegion.prefLabel" in projects_raw.columns:
+                    region_options = sorted(
+                        projects_raw["storageRegion.prefLabel"]
+                        .dropna()
+                        .unique()
+                        .tolist()
+                    )
+                    regions_selected = st.multiselect(
+                        "Storage region",
+                        options=region_options,
+                        default=region_options,
+                        key="projects_region_filter",
+                    )
+                else:
+                    st.caption("No storageRegion.prefLabel column in CSV.")
+
+    # Apply filters
+    projects = projects_raw.copy()
+
+    if creators_selected is not None and "creator.name" in projects.columns:
+        def has_all_creators(val: str) -> bool:
+            text = str(val) if pd.notna(val) else ""
+            return all(c in text for c in creators_selected)
+
+        projects = projects[projects["creator.name"].apply(has_all_creators)]
+
+    if licenses_selected is not None and "rights.name" in projects.columns:
+        projects = projects[projects["rights.name"].isin(licenses_selected)]
+
+    if regions_selected is not None and "storageRegion.prefLabel" in projects.columns:
+        projects = projects[
+            projects["storageRegion.prefLabel"].isin(regions_selected)
         ]
-        existing = [c for c in cols if c in display.columns]
 
-        c1, c2 = st.columns(2)
-        c1.metric("Projects (rows)", fmt(len(display)))
-        if "Total data stored on OSF (GB)" in display.columns:
-            c2.metric(
-                "Total storage (GB)",
-                fmt(display["Total data stored on OSF (GB)"].sum(), fmt_str="{:,.2f}"),
+    if (
+        date_start is not None
+        and date_end is not None
+        and "dateCreated" in projects.columns
+    ):
+        dates = pd.to_datetime(projects["dateCreated"], errors="coerce")
+        mask = (dates.dt.date >= date_start) & (dates.dt.date <= date_end)
+        projects = projects[mask]
+
+    # Main
+    with main_col:
+        if projects.empty:
+            st.info("No projects match the current filters.")
+        else:
+            st.markdown(f"**{len(projects):,} Total Projects**")
+
+            df = projects.copy()
+            if "storageByteCount" in df.columns:
+                df["Total data stored on OSF (GB)"] = df["storageByteCount"] / 1e9
+
+            display = df.rename(
+                columns={
+                    "title": "Title",
+                    "@id": "OSF Link",
+                    "dateCreated": "Created date",
+                    "dateModified": "Modified date",
+                    "sameAs": "DOI",
+                    "storageRegion.prefLabel": "Storage region",
+                    "creator.name": "Creator(s)",
+                    "usage.viewCount": "Views (last 30 days)",
+                    "resourceNature.displayLabel": "Resource type",
+                    "rights.name": "License",
+                    "hasOsfAddon.prefLabel": "Add-ons",
+                    "funder.name": "Funder name",
+                }
             )
 
-        st.markdown("#### Project metrics (one row per project)")
-        st.dataframe(
-            display[existing].sort_values("Modified date", ascending=False).reset_index(drop=True)
-        )
+            cols = [
+                "Title",
+                "OSF Link",
+                "Created date",
+                "Modified date",
+                "DOI",
+                "Storage region",
+                "Total data stored on OSF (GB)",
+                "Creator(s)",
+                "Views (last 30 days)",
+                "Resource type",
+                "License",
+                "Add-ons",
+                "Funder name",
+            ]
+            existing = [c for c in cols if c in display.columns]
+
+            mcol1, mcol2 = st.columns(2)
+            mcol1.metric("Projects (rows)", fmt(len(display)))
+            if "Total data stored on OSF (GB)" in display.columns:
+                mcol2.metric(
+                    "Total storage (GB)",
+                    fmt(display["Total data stored on OSF (GB)"].sum(), fmt_str="{:,.2f}"),
+                )
+
+            st.markdown("#### Project metrics (one row per project)")
+            st.dataframe(
+                display[existing]
+                .sort_values("Modified date", ascending=False)
+                .reset_index(drop=True)
+            )
 
 
 # =====================================================
-# REGISTRATIONS TAB (with its own filters)
+# REGISTRATIONS TAB (drawer filters, AND creators)
 # =====================================================
 
 elif page == "Registrations":
     st.subheader("Registrations")
 
-    st.markdown("##### Filters (Registrations tab)")
-    rcol1, rcol2, rcol3 = st.columns([2, 2, 2])
+    if "regs_show_filters" not in st.session_state:
+        st.session_state["regs_show_filters"] = True
 
-    with rcol1:
-        regs_search = st.text_input(
-            "Search registrations (title contains)",
-            value="",
-            key="regs_search",
-        ).strip()
-    with rcol2:
-        license_options = (
-            sorted(
-                regs_raw["rights.name"].dropna().unique().tolist()
-            )
-            if "rights.name" in regs_raw.columns
-            else []
-        )
-        if license_options:
-            regs_licenses = st.multiselect(
-                "License",
-                options=license_options,
-                default=license_options,
-                key="regs_licenses",
-            )
-        else:
-            regs_licenses = []
-    with rcol3:
-        region_options = (
-            sorted(
-                regs_raw["storageRegion.prefLabel"].dropna().unique().tolist()
-            )
-            if "storageRegion.prefLabel" in regs_raw.columns
-            else []
-        )
-        if region_options:
-            regs_regions = st.multiselect(
-                "Storage region",
-                options=region_options,
-                default=region_options,
-                key="regs_regions",
-            )
-        else:
-            regs_regions = []
+    def toggle_regs_filters():
+        st.session_state["regs_show_filters"] = not st.session_state[
+            "regs_show_filters"
+        ]
+
+    top_left, top_filters, top_customize = st.columns([6, 1, 1])
+
+    with top_left:
+        st.markdown(f"**{len(regs_raw):,} Total Registrations**")
+
+    with top_filters:
+        st.button("Filters", on_click=toggle_regs_filters, use_container_width=True)
+
+    with top_customize:
+        st.button("Customize", disabled=True, use_container_width=True)
+
+    show_filters = st.session_state["regs_show_filters"]
+
+    if show_filters:
+        main_col, filter_col = st.columns([4, 2])
+    else:
+        main_col = st.container()
+        filter_col = None
+
+    creators_selected = None
+    date_start = None
+    date_end = None
+    licenses_selected = None
+    regions_selected = None
+    schemas_selected = None
+
+    if filter_col is not None:
+        with filter_col:
+            st.markdown("#### Filter By")
+
+            with st.expander("Creator", expanded=False):
+                if "creator.name" in regs_raw.columns:
+                    creator_options = sorted(
+                        regs_raw["creator.name"].dropna().unique().tolist()
+                    )
+                    creators_selected = st.multiselect(
+                        "Creator",
+                        options=creator_options,
+                        default=creator_options,
+                        key="regs_creator_filter",
+                    )
+                else:
+                    st.caption("No creator.name column in registrations CSV.")
+
+            with st.expander("Date created", expanded=False):
+                if "dateCreated" in regs_raw.columns:
+                    dates = pd.to_datetime(
+                        regs_raw["dateCreated"], errors="coerce"
+                    )
+                    if not dates.isna().all():
+                        min_date, max_date = dates.min().date(), dates.max().date()
+                        date_range = st.date_input(
+                            "Created between",
+                            value=(min_date, max_date),
+                            min_value=min_date,
+                            max_value=max_date,
+                            key="regs_date_filter",
+                        )
+                        if isinstance(date_range, (list, tuple)):
+                            date_start, date_end = date_range
+                    else:
+                        st.caption("dateCreated values could not be parsed.")
+                else:
+                    st.caption("No dateCreated column in CSV.")
+
+            with st.expander("License", expanded=False):
+                if "rights.name" in regs_raw.columns:
+                    license_options = sorted(
+                        regs_raw["rights.name"].dropna().unique().tolist()
+                    )
+                    licenses_selected = st.multiselect(
+                        "License",
+                        options=license_options,
+                        default=license_options,
+                        key="regs_license_filter",
+                    )
+                else:
+                    st.caption("No rights.name column in CSV.")
+
+            with st.expander("Storage region", expanded=False):
+                if "storageRegion.prefLabel" in regs_raw.columns:
+                    region_options = sorted(
+                        regs_raw["storageRegion.prefLabel"]
+                        .dropna()
+                        .unique()
+                        .tolist()
+                    )
+                    regions_selected = st.multiselect(
+                        "Storage region",
+                        options=region_options,
+                        default=region_options,
+                        key="regs_region_filter",
+                    )
+                else:
+                    st.caption("No storageRegion.prefLabel column in CSV.")
+
+            with st.expander("Registration schema", expanded=False):
+                if "conformsTo.title" in regs_raw.columns:
+                    schema_options = sorted(
+                        regs_raw["conformsTo.title"].dropna().unique().tolist()
+                    )
+                    schemas_selected = st.multiselect(
+                        "Schema",
+                        options=schema_options,
+                        default=schema_options,
+                        key="regs_schema_filter",
+                    )
+                else:
+                    st.caption("No conformsTo.title column in CSV.")
 
     regs = regs_raw.copy()
-    if regs_licenses and "rights.name" in regs.columns:
-        regs = regs[
-            regs["rights.name"].isin(regs_licenses) | regs["rights.name"].isna()
-        ]
-    if regs_regions and "storageRegion.prefLabel" in regs.columns:
-        regs = regs[
-            regs["storageRegion.prefLabel"].isin(regs_regions)
-            | regs["storageRegion.prefLabel"].isna()
-        ]
-    if regs_search and "title" in regs.columns:
-        regs = regs[
-            regs["title"].astype(str).str.contains(regs_search, case=False, na=False)
-        ]
 
-    if regs.empty:
-        st.info("No registrations match the current filters.")
-    else:
-        df = regs.copy()
-        if "storageByteCount" in df.columns:
-            df["Total data stored on OSF (GB)"] = df["storageByteCount"] / 1e9
+    if creators_selected is not None and "creator.name" in regs.columns:
+        def has_all_creators(val: str) -> bool:
+            text = str(val) if pd.notna(val) else ""
+            return all(c in text for c in creators_selected)
 
-        display = df.rename(
-            columns={
-                "title": "Title",
-                "@id": "OSF Link",
-                "dateCreated": "Created date",
-                "dateModified": "Modified date",
-                "sameAs": "DOI",
-                "storageRegion.prefLabel": "Storage region",
-                "creator.name": "Creator(s)",
-                "usage.viewCount": "Views (last 30 days)",
-                "resourceNature.displayLabel": "Resource type",
-                "rights.name": "License",
-                "funder.name": "Funder name",
-                "conformsTo.title": "Registration schema",
-            }
-        )
+        regs = regs[regs["creator.name"].apply(has_all_creators)]
 
-        cols = [
-            "Title",
-            "Created date",
-            "Modified date",
-            "DOI",
-            "Storage region",
-            "Total data stored on OSF (GB)",
-            "Creator(s)",
-            "Views (last 30 days)",
-            "Resource type",
-            "License",
-            "Funder name",
-            "Registration schema",
-            "OSF Link",
-        ]
-        existing = [c for c in cols if c in display.columns]
+    if licenses_selected is not None and "rights.name" in regs.columns:
+        regs = regs[regs["rights.name"].isin(licenses_selected)]
 
-        c1, c2 = st.columns(2)
-        c1.metric("Registrations (rows)", fmt(len(display)))
-        if "Total data stored on OSF (GB)" in display.columns:
-            c2.metric(
-                "Total storage (GB)",
-                fmt(display["Total data stored on OSF (GB)"].sum(), fmt_str="{:,.2f}"),
+    if regions_selected is not None and "storageRegion.prefLabel" in regs.columns:
+        regs = regs[regs["storageRegion.prefLabel"].isin(regions_selected)]
+
+    if schemas_selected is not None and "conformsTo.title" in regs.columns:
+        regs = regs[regs["conformsTo.title"].isin(schemas_selected)]
+
+    if (
+        date_start is not None
+        and date_end is not None
+        and "dateCreated" in regs.columns
+    ):
+        dates = pd.to_datetime(regs["dateCreated"], errors="coerce")
+        mask = (dates.dt.date >= date_start) & (dates.dt.date <= date_end)
+        regs = regs[mask]
+
+    with main_col:
+        if regs.empty:
+            st.info("No registrations match the current filters.")
+        else:
+            st.markdown(f"**{len(regs):,} Total Registrations**")
+
+            df = regs.copy()
+            if "storageByteCount" in df.columns:
+                df["Total data stored on OSF (GB)"] = df["storageByteCount"] / 1e9
+
+            display = df.rename(
+                columns={
+                    "title": "Title",
+                    "@id": "OSF Link",
+                    "dateCreated": "Created date",
+                    "dateModified": "Modified date",
+                    "sameAs": "DOI",
+                    "storageRegion.prefLabel": "Storage region",
+                    "creator.name": "Creator(s)",
+                    "usage.viewCount": "Views (last 30 days)",
+                    "resourceNature.displayLabel": "Resource type",
+                    "rights.name": "License",
+                    "funder.name": "Funder name",
+                    "conformsTo.title": "Registration schema",
+                }
             )
 
-        st.markdown("#### Registration metrics (one row per registration)")
-        st.dataframe(
-            display[existing].sort_values("Modified date", ascending=False).reset_index(drop=True)
-        )
+            cols = [
+                "Title",
+                "OSF Link",
+                "Created date",
+                "Modified date",
+                "DOI",
+                "Storage region",
+                "Total data stored on OSF (GB)",
+                "Creator(s)",
+                "Views (last 30 days)",
+                "Resource type",
+                "License",
+                "Funder name",
+                "Registration schema",
+            ]
+            existing = [c for c in cols if c in display.columns]
+
+            mcol1, mcol2 = st.columns(2)
+            mcol1.metric("Registrations (rows)", fmt(len(display)))
+            if "Total data stored on OSF (GB)" in display.columns:
+                mcol2.metric(
+                    "Total storage (GB)",
+                    fmt(display["Total data stored on OSF (GB)"].sum(), fmt_str="{:,.2f}"),
+                )
+
+            st.markdown("#### Registration metrics (one row per registration)")
+            st.dataframe(
+                display[existing]
+                .sort_values("Modified date", ascending=False)
+                .reset_index(drop=True)
+            )
 
 
 # =====================================================
-# PREPRINTS TAB (with its own filters)
+# PREPRINTS TAB (drawer filters, AND creators)
 # =====================================================
 
 elif page == "Preprints":
     st.subheader("Preprints")
 
-    st.markdown("##### Filters (Preprints tab)")
-    ppc1, ppc2 = st.columns([2, 2])
+    if "preprints_show_filters" not in st.session_state:
+        st.session_state["preprints_show_filters"] = True
 
-    with ppc1:
-        preprints_search = st.text_input(
-            "Search preprints (title contains)",
-            value="",
-            key="preprints_search",
-        ).strip()
-    with ppc2:
-        license_options = (
-            sorted(
-                preprints_raw["rights.name"].dropna().unique().tolist()
-            )
-            if "rights.name" in preprints_raw.columns
-            else []
-        )
-        if license_options:
-            preprints_licenses = st.multiselect(
-                "License",
-                options=license_options,
-                default=license_options,
-                key="preprints_licenses",
-            )
-        else:
-            preprints_licenses = []
+    def toggle_preprints_filters():
+        st.session_state["preprints_show_filters"] = not st.session_state[
+            "preprints_show_filters"
+        ]
+
+    top_left, top_filters, top_customize = st.columns([6, 1, 1])
+
+    with top_left:
+        st.markdown(f"**{len(preprints_raw):,} Total Preprints**")
+
+    with top_filters:
+        st.button("Filters", on_click=toggle_preprints_filters, use_container_width=True)
+
+    with top_customize:
+        st.button("Customize", disabled=True, use_container_width=True)
+
+    show_filters = st.session_state["preprints_show_filters"]
+
+    if show_filters:
+        main_col, filter_col = st.columns([4, 2])
+    else:
+        main_col = st.container()
+        filter_col = None
+
+    creators_selected = None
+    date_start = None
+    date_end = None
+    subjects_selected = None
+    licenses_selected = None
+
+    if filter_col is not None:
+        with filter_col:
+            st.markdown("#### Filter By")
+
+            with st.expander("Creator", expanded=False):
+                if "creator.name" in preprints_raw.columns:
+                    creator_options = sorted(
+                        preprints_raw["creator.name"].dropna().unique().tolist()
+                    )
+                    creators_selected = st.multiselect(
+                        "Creator",
+                        options=creator_options,
+                        default=creator_options,
+                        key="preprints_creator_filter",
+                    )
+                else:
+                    st.caption("No creator.name column in CSV.")
+
+            with st.expander("Date created", expanded=False):
+                if "dateCreated" in preprints_raw.columns:
+                    dates = pd.to_datetime(
+                        preprints_raw["dateCreated"], errors="coerce"
+                    )
+                    if not dates.isna().all():
+                        min_date, max_date = dates.min().date(), dates.max().date()
+                        date_range = st.date_input(
+                            "Created between",
+                            value=(min_date, max_date),
+                            min_value=min_date,
+                            max_value=max_date,
+                            key="preprints_date_filter",
+                        )
+                        if isinstance(date_range, (list, tuple)):
+                            date_start, date_end = date_range
+                    else:
+                        st.caption("dateCreated values could not be parsed.")
+                else:
+                    st.caption("No dateCreated column in CSV.")
+
+            with st.expander("Subject", expanded=False):
+                subj_col = next(
+                    (c for c in preprints_raw.columns if "subject" in c.lower()),
+                    None,
+                )
+                if subj_col:
+                    subj_options = sorted(
+                        preprints_raw[subj_col].dropna().unique().tolist()
+                    )
+                    subjects_selected = st.multiselect(
+                        "Subject",
+                        options=subj_options,
+                        default=subj_options,
+                        key="preprints_subject_filter",
+                    )
+                else:
+                    st.caption("No subject column found in CSV.")
+
+            with st.expander("License", expanded=True):
+                if "rights.name" in preprints_raw.columns:
+                    license_options = sorted(
+                        preprints_raw["rights.name"].dropna().unique().tolist()
+                    )
+                    licenses_selected = st.multiselect(
+                        "License",
+                        options=license_options,
+                        default=license_options,
+                        key="preprints_license_filter",
+                    )
+                else:
+                    st.caption("No rights.name column in CSV.")
 
     preprints = preprints_raw.copy()
-    if preprints_licenses and "rights.name" in preprints.columns:
-        preprints = preprints[
-            preprints["rights.name"].isin(preprints_licenses)
-            | preprints["rights.name"].isna()
-        ]
-    if preprints_search and "title" in preprints.columns:
-        preprints = preprints[
-            preprints["title"].astype(str).str.contains(preprints_search, case=False, na=False)
-        ]
 
-    if preprints.empty:
-        st.info("No preprints match the current filters.")
-    else:
-        df = preprints.copy()
+    if creators_selected is not None and "creator.name" in preprints.columns:
+        def has_all_creators(val: str) -> bool:
+            text = str(val) if pd.notna(val) else ""
+            return all(c in text for c in creators_selected)
 
-        display = df.rename(
-            columns={
-                "title": "Title",
-                "@id": "OSF Link",
-                "dateCreated": "Created date",
-                "dateModified": "Modified date",
-                "sameAs": "DOI",
-                "rights.name": "License",
-                "creator.name": "Creator(s)",
-                "usage.viewCount": "Views (last 30 days)",
-                "usage.downloadCount": "Downloads (last 30 days)",
-            }
+        preprints = preprints[preprints["creator.name"].apply(has_all_creators)]
+
+    if licenses_selected is not None and "rights.name" in preprints.columns:
+        preprints = preprints[preprints["rights.name"].isin(licenses_selected)]
+
+    if subjects_selected is not None:
+        subj_col = next(
+            (c for c in preprints.columns if "subject" in c.lower()),
+            None,
         )
+        if subj_col:
+            preprints = preprints[preprints[subj_col].isin(subjects_selected)]
 
-        cols = [
-            "Title",
-            "Created date",
-            "Modified date",
-            "DOI",
-            "License",
-            "Creator(s)",
-            "Views (last 30 days)",
-            "Downloads (last 30 days)",
-            "OSF Link",
-        ]
-        existing = [c for c in cols if c in display.columns]
+    if (
+        date_start is not None
+        and date_end is not None
+        and "dateCreated" in preprints.columns
+    ):
+        dates = pd.to_datetime(preprints["dateCreated"], errors="coerce")
+        mask = (dates.dt.date >= date_start) & (dates.dt.date <= date_end)
+        preprints = preprints[mask]
 
-        c1, c2 = st.columns(2)
-        c1.metric("Preprints (rows)", fmt(len(display)))
-        if "Views (last 30 days)" in display.columns:
-            c2.metric(
-                "Avg. views (30 days)",
-                fmt(display["Views (last 30 days)"].mean(), fmt_str="{:,.1f}"),
+    with main_col:
+        if preprints.empty:
+            st.info("No preprints match the current filters.")
+        else:
+            st.markdown(f"**{len(preprints):,} Total Preprints**")
+
+            df = preprints.copy()
+            display = df.rename(
+                columns={
+                    "title": "Title",
+                    "@id": "OSF Link",
+                    "dateCreated": "Created date",
+                    "dateModified": "Modified date",
+                    "sameAs": "DOI",
+                    "rights.name": "License",
+                    "creator.name": "Contributor name",
+                    "usage.viewCount": "Views (last 30 days)",
+                    "usage.downloadCount": "Downloads (last 30 days)",
+                }
             )
 
-        st.markdown("#### Preprint metrics (one row per preprint)")
-        st.dataframe(
-            display[existing].sort_values("Modified date", ascending=False).reset_index(drop=True)
-        )
+            cols = [
+                "Title",
+                "OSF Link",
+                "Created date",
+                "Modified date",
+                "DOI",
+                "License",
+                "Contributor name",
+                "Views (last 30 days)",
+                "Downloads (last 30 days)",
+            ]
+            existing = [c for c in cols if c in display.columns]
+
+            mcol1, mcol2 = st.columns(2)
+            mcol1.metric("Preprints (rows)", fmt(len(display)))
+            if "Views (last 30 days)" in display.columns:
+                mcol2.metric(
+                    "Avg. views (30 days)",
+                    fmt(display["Views (last 30 days)"].mean(), fmt_str="{:,.1f}"),
+                )
+
+            st.markdown("#### Preprint metrics (one row per preprint)")
+            st.dataframe(
+                display[existing]
+                .sort_values("Modified date", ascending=False)
+                .reset_index(drop=True)
+            )
