@@ -17,6 +17,12 @@ st.set_page_config(
     layout="wide",
 )
 
+INSTITUTION_NAME = "Center For Open Science [Test]"
+# You can swap this for a different logo URL or a local static image
+INSTITUTION_LOGO_URL = (
+    "https://osf.io/static/img/cos-white.svg"
+)
+
 st.markdown(
     """
     <style>
@@ -31,16 +37,35 @@ st.markdown(
         padding: 0.75rem 1.0rem;
         background: #023c52;
         color: #ffffff;
-        border-radius: 8px;
-        margin-bottom: 1.0rem;
+        border-radius: 0 0 8px 8px;
+        margin-bottom: 0.5rem;
+    }
+    .osf-header-left {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
+    .osf-logo {
+        height: 40px;
+        width: 40px;
+        border-radius: 999px;
+        background: #ffffff11;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        overflow: hidden;
+    }
+    .osf-logo img {
+        max-height: 32px;
+        max-width: 32px;
     }
     .osf-title {
-        font-size: 1.6rem;
+        font-size: 1.4rem;
         font-weight: 700;
-        margin-bottom: 0.25rem;
+        margin-bottom: 0.15rem;
     }
     .osf-subtitle {
-        font-size: 0.95rem;
+        font-size: 0.9rem;
         color: #e3edf2;
     }
     .osf-badge {
@@ -49,6 +74,30 @@ st.markdown(
         border-radius: 999px;
         font-size: 0.75rem;
         color: #ffffff;
+    }
+
+    /* Top nav styling */
+    .osf-nav {
+        display: flex;
+        gap: 0.5rem;
+        padding: 0.5rem 0.25rem 0.75rem 0.25rem;
+        border-bottom: 1px solid #e5e7eb;
+        margin-bottom: 0.5rem;
+    }
+    .osf-nav-tab {
+        padding: 0.35rem 0.9rem;
+        border-radius: 999px;
+        font-size: 0.9rem;
+        font-weight: 500;
+        cursor: pointer;
+        border: 1px solid transparent;
+        color: #374151;
+        background-color: transparent;
+    }
+    .osf-nav-tab-active {
+        background-color: #ffffff;
+        border-color: #d1d5db;
+        color: #111827;
     }
 
     [data-testid="stSidebar"] {
@@ -148,7 +197,6 @@ def fmt(value, default="—", fmt_str="{:,}"):
 
 
 def compute_summary_metrics(users_df, projects_df, regs_df, preprints_df):
-    # Users
     total_users = len(users_df)
     has_orcid = (
         users_df["orcid_id"].notna()
@@ -168,12 +216,10 @@ def compute_summary_metrics(users_df, projects_df, regs_df, preprints_df):
                 (users_df["month_last_active"] == users_df["report_yearmonth"]).sum()
             )
 
-    # Content counts
     total_projects = len(projects_df)
     total_regs = len(regs_df)
     total_preprints = len(preprints_df)
 
-    # Files & storage from user metrics
     total_files = (
         users_df["public_file_count"].sum()
         if "public_file_count" in users_df.columns
@@ -200,17 +246,11 @@ def compute_summary_metrics(users_df, projects_df, regs_df, preprints_df):
 
 
 # =====================================================
-# SIDEBAR NAV
+# SIDEBAR (minimal)
 # =====================================================
 
 with st.sidebar:
     st.markdown("### 📊 OSF Institutions (Demo)")
-    page = st.radio(
-        "Tabs",
-        ["Summary", "Users", "Projects", "Registrations", "Preprints"],
-        index=0,
-    )
-    st.markdown("---")
     st.caption(
         "Demo using CSV exports from an OSF Institutions dashboard. "
         "Not connected to the live OSF API."
@@ -218,7 +258,7 @@ with st.sidebar:
 
 
 # =====================================================
-# HEADER
+# HEADER + TOP NAV
 # =====================================================
 
 global_summary = compute_summary_metrics(
@@ -233,11 +273,15 @@ report_month_label = (
 st.markdown(
     f"""
     <div class="osf-header">
-      <div>
-        <div class="osf-title">OSF Institutions — Metrics Dashboard (Demo)</div>
-        <div class="osf-subtitle">
-          Snapshot-style metrics using CSV exports from an OSF Institutions dashboard.
-          {report_month_label}
+      <div class="osf-header-left">
+        <div class="osf-logo">
+          <img src="{INSTITUTION_LOGO_URL}" alt="Institution logo" />
+        </div>
+        <div>
+          <div class="osf-title">{INSTITUTION_NAME}</div>
+          <div class="osf-subtitle">
+            Institutions Dashboard (Demo) · {report_month_label}
+          </div>
         </div>
       </div>
       <div>
@@ -248,9 +292,42 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# page state
+if "page" not in st.session_state:
+    st.session_state["page"] = "Summary"
+
+
+def render_top_nav():
+    tabs = ["Summary", "Users", "Projects", "Registrations", "Preprints"]
+    active = st.session_state["page"]
+
+    # Build HTML nav bar
+    html = ['<div class="osf-nav">']
+    for t in tabs:
+        cls = "osf-nav-tab"
+        if t == active:
+            cls += " osf-nav-tab-active"
+        html.append(f'<button class="{cls}" type="button">{t}</button>')
+    html.append("</div>")
+
+    # Use radio for actual interaction (hidden label), styled by CSS nav-ish
+    col = st.columns(len(tabs))
+    # simpler: streamlit's horizontal radio
+    st.session_state["page"] = st.radio(
+        label="",
+        options=tabs,
+        index=tabs.index(active),
+        horizontal=True,
+        key="top_nav_radio",
+    )
+
+
+render_top_nav()
+page = st.session_state["page"]
+
 
 # =====================================================
-# SUMMARY TAB (all chart rows)
+# SUMMARY TAB
 # =====================================================
 
 if page == "Summary":
@@ -264,16 +341,11 @@ if page == "Summary":
     r1c1, r1c2, r1c3, r1c4 = st.columns(4)
     r2c1, r2c2, r2c3, r2c4 = st.columns(4)
 
-    # Row 1
     r1c1.metric("Total Users", fmt(summary["total_users"]))
     r1c2.metric("Total Monthly Logged in Users", fmt(summary["monthly_logged_in"]))
     r1c3.metric("Total Monthly Active Users", fmt(summary["monthly_active"]))
-    r1c4.metric(
-        "OSF Public and Private Projects",
-        fmt(summary["total_projects"]),
-    )
+    r1c4.metric("OSF Public and Private Projects", fmt(summary["total_projects"]))
 
-    # Row 2
     r2c1.metric(
         "OSF Public and Embargoed Registrations",
         fmt(summary["total_regs"]),
@@ -287,12 +359,10 @@ if page == "Summary":
 
     st.markdown("---")
 
-    # ----- Chart helpers -----
     def donut_chart(labels, values, title: str):
         if not len(values) or sum(values) == 0:
             st.info(f"No data available for **{title}**.")
             return
-
         fig, ax = plt.subplots()
         wedges, _ = ax.pie(
             values,
@@ -317,7 +387,7 @@ if page == "Summary":
         st.markdown(f"**{title}**")
         st.bar_chart(series)
 
-    # ---------- Row A: Users / Projects / Registrations ----------
+    # ---------- Row A ----------
     a1, a2, a3 = st.columns(3)
 
     with a1:
@@ -339,9 +409,7 @@ if page == "Summary":
         proj_labels, proj_values = [], []
         if "visibility" in projects_raw.columns:
             vis_counts = (
-                projects_raw["visibility"]
-                .fillna("Unknown")
-                .value_counts()
+                projects_raw["visibility"].fillna("Unknown").value_counts()
             )
             proj_labels = vis_counts.index.tolist()
             proj_values = vis_counts.values.tolist()
@@ -352,15 +420,13 @@ if page == "Summary":
         reg_labels, reg_values = [], []
         if "visibility" in regs_raw.columns:
             reg_vis = (
-                regs_raw["visibility"]
-                .fillna("Unknown")
-                .value_counts()
+                regs_raw["visibility"].fillna("Unknown").value_counts()
             )
             reg_labels = reg_vis.index.tolist()
             reg_values = reg_vis.values.tolist()
         donut_chart(reg_labels, reg_values, title="Public vs Embargoed Registrations")
 
-    # ---------- Row B: Total objects / licenses / add-ons ----------
+    # ---------- Row B ----------
     b1, b2, b3 = st.columns(3)
 
     with b1:
@@ -378,7 +444,6 @@ if page == "Summary":
         if summary["total_files"] is not None:
             labels.append("Files")
             values.append(summary["total_files"])
-
         st.markdown("#### Total OSF Objects")
         donut_chart(labels, values, title="Total OSF Objects")
 
@@ -418,7 +483,7 @@ if page == "Summary":
 
         bar_chart_from_series(addons_counts, "Top 10 Add-ons")
 
-    # ---------- Row C: Top Storage Regions ----------
+    # ---------- Row C ----------
     c1, _, _ = st.columns([1.2, 1, 1])
 
     with c1:
@@ -443,7 +508,7 @@ if page == "Summary":
 
 
 # =====================================================
-# USERS TAB (inline filters)
+# USERS TAB
 # =====================================================
 
 elif page == "Users":
@@ -468,7 +533,7 @@ elif page == "Users":
             users_depts = st.multiselect(
                 "Department",
                 options=dept_options,
-                default=dept_options,
+                default=[],
                 key="users_depts",
             )
         else:
@@ -595,54 +660,51 @@ elif page == "Projects":
         main_col = st.container()
         filter_col = None
 
-    creators_selected = None
-    date_start = None
-    date_end = None
-    licenses_selected = None
-    regions_selected = None
+    creators_selected = []
+    year_selected = None
+    licenses_selected = []
+    regions_selected = []
 
     if filter_col is not None:
         with filter_col:
             st.markdown("#### Filter By")
 
-            # Creator (AND semantics)
             with st.expander("Creator", expanded=False):
                 if "creator.name" in projects_raw.columns:
                     creator_options = sorted(
                         projects_raw["creator.name"].dropna().unique().tolist()
                     )
                     creators_selected = st.multiselect(
-                        "Creator",
+                        "Creator name",
                         options=creator_options,
-                        default=creator_options,
+                        default=[],
                         key="projects_creator_filter",
                     )
                 else:
                     st.caption("No creator.name column in projects CSV.")
 
-            # Date created
             with st.expander("Date created", expanded=False):
                 if "dateCreated" in projects_raw.columns:
-                    dates = pd.to_datetime(
-                        projects_raw["dateCreated"], errors="coerce"
+                    years = (
+                        pd.to_datetime(projects_raw["dateCreated"], errors="coerce")
+                        .dt.year.dropna()
+                        .astype(int)
+                        .unique()
+                        .tolist()
                     )
-                    if not dates.isna().all():
-                        min_date, max_date = dates.min().date(), dates.max().date()
-                        date_range = st.date_input(
-                            "Created between",
-                            value=(min_date, max_date),
-                            min_value=min_date,
-                            max_value=max_date,
-                            key="projects_date_filter",
-                        )
-                        if isinstance(date_range, (list, tuple)):
-                            date_start, date_end = date_range
-                    else:
-                        st.caption("dateCreated values could not be parsed.")
+                    years = sorted(years)
+                    options = ["All years"] + [str(y) for y in years]
+                    choice = st.selectbox(
+                        "Year created",
+                        options=options,
+                        index=0,
+                        key="projects_year_filter",
+                    )
+                    if choice != "All years":
+                        year_selected = int(choice)
                 else:
                     st.caption("No dateCreated column in CSV.")
 
-            # License
             with st.expander("License", expanded=False):
                 if "rights.name" in projects_raw.columns:
                     license_options = sorted(
@@ -651,13 +713,12 @@ elif page == "Projects":
                     licenses_selected = st.multiselect(
                         "License",
                         options=license_options,
-                        default=license_options,
+                        default=[],
                         key="projects_license_filter",
                     )
                 else:
                     st.caption("No rights.name column in CSV.")
 
-            # Storage region
             with st.expander("Storage region", expanded=False):
                 if "storageRegion.prefLabel" in projects_raw.columns:
                     region_options = sorted(
@@ -669,40 +730,33 @@ elif page == "Projects":
                     regions_selected = st.multiselect(
                         "Storage region",
                         options=region_options,
-                        default=region_options,
+                        default=[],
                         key="projects_region_filter",
                     )
                 else:
                     st.caption("No storageRegion.prefLabel column in CSV.")
 
-    # Apply filters
     projects = projects_raw.copy()
 
-    if creators_selected is not None and "creator.name" in projects.columns:
+    if creators_selected and "creator.name" in projects.columns:
         def has_all_creators(val: str) -> bool:
             text = str(val) if pd.notna(val) else ""
             return all(c in text for c in creators_selected)
 
         projects = projects[projects["creator.name"].apply(has_all_creators)]
 
-    if licenses_selected is not None and "rights.name" in projects.columns:
+    if licenses_selected and "rights.name" in projects.columns:
         projects = projects[projects["rights.name"].isin(licenses_selected)]
 
-    if regions_selected is not None and "storageRegion.prefLabel" in projects.columns:
+    if regions_selected and "storageRegion.prefLabel" in projects.columns:
         projects = projects[
             projects["storageRegion.prefLabel"].isin(regions_selected)
         ]
 
-    if (
-        date_start is not None
-        and date_end is not None
-        and "dateCreated" in projects.columns
-    ):
-        dates = pd.to_datetime(projects["dateCreated"], errors="coerce")
-        mask = (dates.dt.date >= date_start) & (dates.dt.date <= date_end)
-        projects = projects[mask]
+    if year_selected is not None and "dateCreated" in projects.columns:
+        years = pd.to_datetime(projects["dateCreated"], errors="coerce").dt.year
+        projects = projects[years == year_selected]
 
-    # Main
     with main_col:
         if projects.empty:
             st.info("No projects match the current filters.")
@@ -797,12 +851,11 @@ elif page == "Registrations":
         main_col = st.container()
         filter_col = None
 
-    creators_selected = None
-    date_start = None
-    date_end = None
-    licenses_selected = None
-    regions_selected = None
-    schemas_selected = None
+    creators_selected = []
+    year_selected = None
+    licenses_selected = []
+    regions_selected = []
+    schemas_selected = []
 
     if filter_col is not None:
         with filter_col:
@@ -814,9 +867,9 @@ elif page == "Registrations":
                         regs_raw["creator.name"].dropna().unique().tolist()
                     )
                     creators_selected = st.multiselect(
-                        "Creator",
+                        "Creator name",
                         options=creator_options,
-                        default=creator_options,
+                        default=[],
                         key="regs_creator_filter",
                     )
                 else:
@@ -824,22 +877,23 @@ elif page == "Registrations":
 
             with st.expander("Date created", expanded=False):
                 if "dateCreated" in regs_raw.columns:
-                    dates = pd.to_datetime(
-                        regs_raw["dateCreated"], errors="coerce"
+                    years = (
+                        pd.to_datetime(regs_raw["dateCreated"], errors="coerce")
+                        .dt.year.dropna()
+                        .astype(int)
+                        .unique()
+                        .tolist()
                     )
-                    if not dates.isna().all():
-                        min_date, max_date = dates.min().date(), dates.max().date()
-                        date_range = st.date_input(
-                            "Created between",
-                            value=(min_date, max_date),
-                            min_value=min_date,
-                            max_value=max_date,
-                            key="regs_date_filter",
-                        )
-                        if isinstance(date_range, (list, tuple)):
-                            date_start, date_end = date_range
-                    else:
-                        st.caption("dateCreated values could not be parsed.")
+                    years = sorted(years)
+                    options = ["All years"] + [str(y) for y in years]
+                    choice = st.selectbox(
+                        "Year created",
+                        options=options,
+                        index=0,
+                        key="regs_year_filter",
+                    )
+                    if choice != "All years":
+                        year_selected = int(choice)
                 else:
                     st.caption("No dateCreated column in CSV.")
 
@@ -851,7 +905,7 @@ elif page == "Registrations":
                     licenses_selected = st.multiselect(
                         "License",
                         options=license_options,
-                        default=license_options,
+                        default=[],
                         key="regs_license_filter",
                     )
                 else:
@@ -868,7 +922,7 @@ elif page == "Registrations":
                     regions_selected = st.multiselect(
                         "Storage region",
                         options=region_options,
-                        default=region_options,
+                        default=[],
                         key="regs_region_filter",
                     )
                 else:
@@ -882,7 +936,7 @@ elif page == "Registrations":
                     schemas_selected = st.multiselect(
                         "Schema",
                         options=schema_options,
-                        default=schema_options,
+                        default=[],
                         key="regs_schema_filter",
                     )
                 else:
@@ -890,30 +944,25 @@ elif page == "Registrations":
 
     regs = regs_raw.copy()
 
-    if creators_selected is not None and "creator.name" in regs.columns:
+    if creators_selected and "creator.name" in regs.columns:
         def has_all_creators(val: str) -> bool:
             text = str(val) if pd.notna(val) else ""
             return all(c in text for c in creators_selected)
 
         regs = regs[regs["creator.name"].apply(has_all_creators)]
 
-    if licenses_selected is not None and "rights.name" in regs.columns:
+    if licenses_selected and "rights.name" in regs.columns:
         regs = regs[regs["rights.name"].isin(licenses_selected)]
 
-    if regions_selected is not None and "storageRegion.prefLabel" in regs.columns:
+    if regions_selected and "storageRegion.prefLabel" in regs.columns:
         regs = regs[regs["storageRegion.prefLabel"].isin(regions_selected)]
 
-    if schemas_selected is not None and "conformsTo.title" in regs.columns:
+    if schemas_selected and "conformsTo.title" in regs.columns:
         regs = regs[regs["conformsTo.title"].isin(schemas_selected)]
 
-    if (
-        date_start is not None
-        and date_end is not None
-        and "dateCreated" in regs.columns
-    ):
-        dates = pd.to_datetime(regs["dateCreated"], errors="coerce")
-        mask = (dates.dt.date >= date_start) & (dates.dt.date <= date_end)
-        regs = regs[mask]
+    if year_selected is not None and "dateCreated" in regs.columns:
+        years = pd.to_datetime(regs["dateCreated"], errors="coerce").dt.year
+        regs = regs[years == year_selected]
 
     with main_col:
         if regs.empty:
@@ -1009,11 +1058,10 @@ elif page == "Preprints":
         main_col = st.container()
         filter_col = None
 
-    creators_selected = None
-    date_start = None
-    date_end = None
-    subjects_selected = None
-    licenses_selected = None
+    creators_selected = []
+    year_selected = None
+    subjects_selected = []
+    licenses_selected = []
 
     if filter_col is not None:
         with filter_col:
@@ -1025,9 +1073,9 @@ elif page == "Preprints":
                         preprints_raw["creator.name"].dropna().unique().tolist()
                     )
                     creators_selected = st.multiselect(
-                        "Creator",
+                        "Creator name",
                         options=creator_options,
-                        default=creator_options,
+                        default=[],
                         key="preprints_creator_filter",
                     )
                 else:
@@ -1035,22 +1083,23 @@ elif page == "Preprints":
 
             with st.expander("Date created", expanded=False):
                 if "dateCreated" in preprints_raw.columns:
-                    dates = pd.to_datetime(
-                        preprints_raw["dateCreated"], errors="coerce"
+                    years = (
+                        pd.to_datetime(preprints_raw["dateCreated"], errors="coerce")
+                        .dt.year.dropna()
+                        .astype(int)
+                        .unique()
+                        .tolist()
                     )
-                    if not dates.isna().all():
-                        min_date, max_date = dates.min().date(), dates.max().date()
-                        date_range = st.date_input(
-                            "Created between",
-                            value=(min_date, max_date),
-                            min_value=min_date,
-                            max_value=max_date,
-                            key="preprints_date_filter",
-                        )
-                        if isinstance(date_range, (list, tuple)):
-                            date_start, date_end = date_range
-                    else:
-                        st.caption("dateCreated values could not be parsed.")
+                    years = sorted(years)
+                    options = ["All years"] + [str(y) for y in years]
+                    choice = st.selectbox(
+                        "Year created",
+                        options=options,
+                        index=0,
+                        key="preprints_year_filter",
+                    )
+                    if choice != "All years":
+                        year_selected = int(choice)
                 else:
                     st.caption("No dateCreated column in CSV.")
 
@@ -1066,7 +1115,7 @@ elif page == "Preprints":
                     subjects_selected = st.multiselect(
                         "Subject",
                         options=subj_options,
-                        default=subj_options,
+                        default=[],
                         key="preprints_subject_filter",
                     )
                 else:
@@ -1080,7 +1129,7 @@ elif page == "Preprints":
                     licenses_selected = st.multiselect(
                         "License",
                         options=license_options,
-                        default=license_options,
+                        default=[],
                         key="preprints_license_filter",
                     )
                 else:
@@ -1088,17 +1137,17 @@ elif page == "Preprints":
 
     preprints = preprints_raw.copy()
 
-    if creators_selected is not None and "creator.name" in preprints.columns:
+    if creators_selected and "creator.name" in preprints.columns:
         def has_all_creators(val: str) -> bool:
             text = str(val) if pd.notna(val) else ""
             return all(c in text for c in creators_selected)
 
         preprints = preprints[preprints["creator.name"].apply(has_all_creators)]
 
-    if licenses_selected is not None and "rights.name" in preprints.columns:
+    if licenses_selected and "rights.name" in preprints.columns:
         preprints = preprints[preprints["rights.name"].isin(licenses_selected)]
 
-    if subjects_selected is not None:
+    if subjects_selected:
         subj_col = next(
             (c for c in preprints.columns if "subject" in c.lower()),
             None,
@@ -1106,14 +1155,9 @@ elif page == "Preprints":
         if subj_col:
             preprints = preprints[preprints[subj_col].isin(subjects_selected)]
 
-    if (
-        date_start is not None
-        and date_end is not None
-        and "dateCreated" in preprints.columns
-    ):
-        dates = pd.to_datetime(preprints["dateCreated"], errors="coerce")
-        mask = (dates.dt.date >= date_start) & (dates.dt.date <= date_end)
-        preprints = preprints[mask]
+    if year_selected is not None and "dateCreated" in preprints.columns:
+        years = pd.to_datetime(preprints["dateCreated"], errors="coerce").dt.year
+        preprints = preprints[years == year_selected]
 
     with main_col:
         if preprints.empty:
