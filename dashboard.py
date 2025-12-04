@@ -81,7 +81,7 @@ PREPRINTS_CSV = DATA_DIR / "2025-12-04_preprints-search-results.csv"
 @st.cache_data
 def load_users(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path)
-    # ensure expected columns exist
+    # sanity check, but don't hard fail
     expected = {
         "report_yearmonth",
         "account_creation_date",
@@ -107,20 +107,17 @@ def load_users(path: Path) -> pd.DataFrame:
 
 @st.cache_data
 def load_projects(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    return df
+    return pd.read_csv(path)
 
 
 @st.cache_data
 def load_regs(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    return df
+    return pd.read_csv(path)
 
 
 @st.cache_data
 def load_preprints(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    return df
+    return pd.read_csv(path)
 
 
 try:
@@ -137,179 +134,17 @@ except Exception as e:
 
 
 # =====================================================
-# SIDEBAR: NAV + GLOBAL FILTERS
+# SMALL HELPERS
 # =====================================================
 
-with st.sidebar:
-    st.markdown("### 📊 OSF Institutions (Demo)")
+def fmt(value, default="—", fmt_str="{:,}"):
+    if value is None:
+        return default
+    try:
+        return fmt_str.format(value)
+    except Exception:
+        return str(value)
 
-    page = st.radio(
-        "Tabs",
-        ["Summary", "Users", "Projects", "Registrations", "Preprints"],
-        index=0,
-    )
-
-    st.markdown("---")
-
-    st.caption(
-        "This demo uses CSV exports from a real OSF Institutions dashboard. "
-        "It is not connected to the live OSF API."
-    )
-
-    st.markdown("---")
-    st.markdown("### Filters (apply across tabs where relevant)")
-
-    # Global search: user_name / title contains
-    search_text = st.text_input(
-        "Search (user name / title contains)",
-        value="",
-        help="Case-insensitive search in user_name (Users) or title (Projects/Registrations/Preprints).",
-    ).strip()
-
-    # Department (Users)
-    dept_options = sorted(
-        users_raw["department"].dropna().unique().tolist()
-    ) if "department" in users_raw.columns else []
-    if dept_options:
-        dept_selected = st.multiselect(
-            "Department (Users)",
-            options=dept_options,
-            default=dept_options,
-        )
-    else:
-        dept_selected = []
-
-    # ORCID (Users)
-    if "orcid_id" in users_raw.columns:
-        orcid_filter = st.selectbox(
-            "ORCID (Users)",
-            ["All", "Has ORCID", "No ORCID"],
-            index=0,
-        )
-    else:
-        orcid_filter = "All"
-
-    # License (Projects/Registrations/Preprints)
-    license_values = set()
-    for df in (projects_raw, regs_raw, preprints_raw):
-        if "rights.name" in df.columns:
-            license_values.update(df["rights.name"].dropna().unique().tolist())
-    license_options = sorted(license_values)
-    if license_options:
-        licenses_selected = st.multiselect(
-            "License (content tabs)",
-            options=license_options,
-            default=license_options,
-        )
-    else:
-        licenses_selected = []
-
-    # Storage region (Projects/Registrations)
-    region_values = set()
-    for df in (projects_raw, regs_raw):
-        if "storageRegion.prefLabel" in df.columns:
-            region_values.update(df["storageRegion.prefLabel"].dropna().unique().tolist())
-    region_options = sorted(region_values)
-    if region_options:
-        regions_selected = st.multiselect(
-            "Storage region (Projects/Regs)",
-            options=region_options,
-            default=region_options,
-        )
-    else:
-        regions_selected = []
-
-
-# =====================================================
-# APPLY FILTERS TO EACH DATASET
-# =====================================================
-
-def apply_user_filters(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-
-    # Department filter
-    if dept_selected:
-        out = out[out["department"].isin(dept_selected)]
-
-    # ORCID filter
-    if orcid_filter != "All":
-        if orcid_filter == "Has ORCID":
-            out = out[out["orcid_id"].notna() & (out["orcid_id"].astype(str).str.strip() != "")]
-        else:
-            out = out[out["orcid_id"].isna() | (out["orcid_id"].astype(str).str.strip() == "")]
-
-    # Search (user_name)
-    if search_text:
-        out = out[out["user_name"].astype(str).str.contains(search_text, case=False, na=False)]
-
-    return out
-
-
-def apply_project_filters(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-
-    # License
-    if licenses_selected and "rights.name" in out.columns:
-        out = out[out["rights.name"].isin(licenses_selected) | out["rights.name"].isna()]
-
-    # Storage region
-    if regions_selected and "storageRegion.prefLabel" in out.columns:
-        out = out[
-            out["storageRegion.prefLabel"].isin(regions_selected)
-            | out["storageRegion.prefLabel"].isna()
-        ]
-
-    # Search (title)
-    if search_text and "title" in out.columns:
-        out = out[out["title"].astype(str).str.contains(search_text, case=False, na=False)]
-
-    return out
-
-
-def apply_reg_filters(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-
-    # License
-    if licenses_selected and "rights.name" in out.columns:
-        out = out[out["rights.name"].isin(licenses_selected) | out["rights.name"].isna()]
-
-    # Storage region
-    if regions_selected and "storageRegion.prefLabel" in out.columns:
-        out = out[
-            out["storageRegion.prefLabel"].isin(regions_selected)
-            | out["storageRegion.prefLabel"].isna()
-        ]
-
-    # Search (title)
-    if search_text and "title" in out.columns:
-        out = out[out["title"].astype(str).str.contains(search_text, case=False, na=False)]
-
-    return out
-
-
-def apply_preprint_filters(df: pd.DataFrame) -> pd.DataFrame:
-    out = df.copy()
-
-    # License
-    if licenses_selected and "rights.name" in out.columns:
-        out = out[out["rights.name"].isin(licenses_selected) | out["rights.name"].isna()]
-
-    # Search (title)
-    if search_text and "title" in out.columns:
-        out = out[out["title"].astype(str).str.contains(search_text, case=False, na=False)]
-
-    return out
-
-
-users = apply_user_filters(users_raw)
-projects = apply_project_filters(projects_raw)
-regs = apply_reg_filters(regs_raw)
-preprints = apply_preprint_filters(preprints_raw)
-
-
-# =====================================================
-# SUMMARY METRICS (SNAPSHOT)
-# =====================================================
 
 def compute_summary_metrics(users_df, projects_df, regs_df, preprints_df):
     # Users
@@ -319,7 +154,6 @@ def compute_summary_metrics(users_df, projects_df, regs_df, preprints_df):
         & (users_df["orcid_id"].astype(str).str.strip() != "")
     ).sum() if "orcid_id" in users_df.columns else None
 
-    # Use report_yearmonth + month_last_* to approximate “monthly” metrics
     monthly_logged_in = None
     monthly_active = None
     report_month = None
@@ -364,23 +198,37 @@ def compute_summary_metrics(users_df, projects_df, regs_df, preprints_df):
     }
 
 
-summary = compute_summary_metrics(users, projects, regs, preprints)
+# =====================================================
+# SIDEBAR NAV
+# =====================================================
 
-
-def fmt(value, default="—", fmt_str="{:,}"):
-    if value is None:
-        return default
-    try:
-        return fmt_str.format(value)
-    except Exception:
-        return str(value)
+with st.sidebar:
+    st.markdown("### 📊 OSF Institutions (Demo)")
+    page = st.radio(
+        "Tabs",
+        ["Summary", "Users", "Projects", "Registrations", "Preprints"],
+        index=0,
+    )
+    st.markdown("---")
+    st.caption(
+        "Demo using CSV exports from an OSF Institutions dashboard. "
+        "Not connected to the live OSF API."
+    )
 
 
 # =====================================================
 # HEADER
 # =====================================================
 
-report_month_label = f"Report month: {summary['report_month']}" if summary["report_month"] else ""
+# We’ll compute the "global" month from all users_raw for header only
+global_summary = compute_summary_metrics(
+    users_raw, projects_raw, regs_raw, preprints_raw
+)
+report_month_label = (
+    f"Report month: {global_summary['report_month']}"
+    if global_summary["report_month"]
+    else ""
+)
 
 st.markdown(
     f"""
@@ -388,7 +236,7 @@ st.markdown(
       <div>
         <div class="osf-title">OSF Institutions — Metrics Dashboard (Demo)</div>
         <div class="osf-subtitle">
-          Snapshot-style metrics using real CSV exports from an OSF Institutions dashboard.
+          Snapshot-style metrics using CSV exports from an OSF Institutions dashboard.
           {report_month_label}
         </div>
       </div>
@@ -400,20 +248,167 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-st.caption(
-    f"Current filters applied · Users: **{len(users):,}** · "
-    f"Projects: **{len(projects):,}** · Registrations: **{len(regs):,}** · "
-    f"Preprints: **{len(preprints):,}**"
-)
-
 
 # =====================================================
-# SUMMARY TAB
+# SUMMARY TAB (with its own filters)
 # =====================================================
 
 if page == "Summary":
     st.subheader("Summary (snapshot counts)")
 
+    # --- Filters for summary ---
+    st.markdown("##### Filters (Summary tab)")
+    fcol1, fcol2, fcol3 = st.columns([2, 2, 2])
+
+    with fcol1:
+        summary_search = st.text_input(
+            "Search (user name / title contains)",
+            value="",
+            key="summary_search",
+        ).strip()
+
+    with fcol2:
+        dept_options = (
+            sorted(users_raw["department"].dropna().unique().tolist())
+            if "department" in users_raw.columns
+            else []
+        )
+        if dept_options:
+            summary_depts = st.multiselect(
+                "Department (Users)",
+                options=dept_options,
+                default=dept_options,
+                key="summary_depts",
+            )
+        else:
+            summary_depts = []
+
+    with fcol3:
+        if "orcid_id" in users_raw.columns:
+            summary_orcid = st.selectbox(
+                "ORCID (Users)",
+                ["All", "Has ORCID", "No ORCID"],
+                index=0,
+                key="summary_orcid",
+            )
+        else:
+            summary_orcid = "All"
+
+    # License & storage filters for content
+    fcol4, fcol5 = st.columns(2)
+    with fcol4:
+        license_values = set()
+        for df_ in (projects_raw, regs_raw, preprints_raw):
+            if "rights.name" in df_.columns:
+                license_values.update(df_["rights.name"].dropna().unique().tolist())
+        license_options = sorted(license_values)
+        if license_options:
+            summary_licenses = st.multiselect(
+                "License (content tabs)",
+                options=license_options,
+                default=license_options,
+                key="summary_licenses",
+            )
+        else:
+            summary_licenses = []
+
+    with fcol5:
+        region_values = set()
+        for df_ in (projects_raw, regs_raw):
+            if "storageRegion.prefLabel" in df_.columns:
+                region_values.update(
+                    df_["storageRegion.prefLabel"].dropna().unique().tolist()
+                )
+        region_options = sorted(region_values)
+        if region_options:
+            summary_regions = st.multiselect(
+                "Storage region (Projects/Regs)",
+                options=region_options,
+                default=region_options,
+                key="summary_regions",
+            )
+        else:
+            summary_regions = []
+
+    # --- Apply filters for summary metrics and charts ---
+
+    # Users
+    users = users_raw.copy()
+    if summary_depts:
+        users = users[users["department"].isin(summary_depts)]
+    if summary_orcid != "All" and "orcid_id" in users.columns:
+        if summary_orcid == "Has ORCID":
+            users = users[
+                users["orcid_id"].notna()
+                & (users["orcid_id"].astype(str).str.strip() != "")
+            ]
+        else:
+            users = users[
+                users["orcid_id"].isna()
+                | (users["orcid_id"].astype(str).str.strip() == "")
+            ]
+    if summary_search:
+        users = users[
+            users["user_name"]
+            .astype(str)
+            .str.contains(summary_search, case=False, na=False)
+        ]
+
+    # Projects
+    projects = projects_raw.copy()
+    if summary_licenses and "rights.name" in projects.columns:
+        projects = projects[
+            projects["rights.name"].isin(summary_licenses)
+            | projects["rights.name"].isna()
+        ]
+    if summary_regions and "storageRegion.prefLabel" in projects.columns:
+        projects = projects[
+            projects["storageRegion.prefLabel"].isin(summary_regions)
+            | projects["storageRegion.prefLabel"].isna()
+        ]
+    if summary_search and "title" in projects.columns:
+        projects = projects[
+            projects["title"].astype(str).str.contains(summary_search, case=False, na=False)
+        ]
+
+    # Registrations
+    regs = regs_raw.copy()
+    if summary_licenses and "rights.name" in regs.columns:
+        regs = regs[
+            regs["rights.name"].isin(summary_licenses)
+            | regs["rights.name"].isna()
+        ]
+    if summary_regions and "storageRegion.prefLabel" in regs.columns:
+        regs = regs[
+            regs["storageRegion.prefLabel"].isin(summary_regions)
+            | regs["storageRegion.prefLabel"].isna()
+        ]
+    if summary_search and "title" in regs.columns:
+        regs = regs[
+            regs["title"].astype(str).str.contains(summary_search, case=False, na=False)
+        ]
+
+    # Preprints
+    preprints = preprints_raw.copy()
+    if summary_licenses and "rights.name" in preprints.columns:
+        preprints = preprints[
+            preprints["rights.name"].isin(summary_licenses)
+            | preprints["rights.name"].isna()
+        ]
+    if summary_search and "title" in preprints.columns:
+        preprints = preprints[
+            preprints["title"].astype(str).str.contains(summary_search, case=False, na=False)
+        ]
+
+    summary = compute_summary_metrics(users, projects, regs, preprints)
+
+    st.caption(
+        f"Current Summary filters → Users: {len(users):,} · "
+        f"Projects: {len(projects):,} · Registrations: {len(regs):,} · "
+        f"Preprints: {len(preprints):,}"
+    )
+
+    # Cards
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("Total users", fmt(summary["total_users"]))
     c2.metric(
@@ -445,7 +440,7 @@ if page == "Summary":
         "Total storage on OSF (GB)",
         fmt(summary["total_storage_gb"], fmt_str="{:,.2f}"),
     )
-    # we don't have public/private flag in these CSVs, so skip “Public content %”
+    c10.metric(" ", " ")  # spacer
 
     st.markdown("### Visualization snapshots")
 
@@ -500,23 +495,81 @@ if page == "Summary":
 
 
 # =====================================================
-# USERS TAB
+# USERS TAB (with its own filters)
 # =====================================================
 
 elif page == "Users":
     st.subheader("Users")
 
+    st.markdown("##### Filters (Users tab)")
+    ucol1, ucol2, ucol3 = st.columns([2, 2, 1])
+
+    with ucol1:
+        users_search = st.text_input(
+            "Search users (name contains)",
+            value="",
+            key="users_search",
+        ).strip()
+    with ucol2:
+        dept_options = (
+            sorted(users_raw["department"].dropna().unique().tolist())
+            if "department" in users_raw.columns
+            else []
+        )
+        if dept_options:
+            users_depts = st.multiselect(
+                "Department",
+                options=dept_options,
+                default=dept_options,
+                key="users_depts",
+            )
+        else:
+            users_depts = []
+    with ucol3:
+        if "orcid_id" in users_raw.columns:
+            users_orcid = st.selectbox(
+                "ORCID",
+                ["All", "Has ORCID", "No ORCID"],
+                index=0,
+                key="users_orcid",
+            )
+        else:
+            users_orcid = "All"
+
+    users = users_raw.copy()
+    if users_depts:
+        users = users[users["department"].isin(users_depts)]
+    if users_orcid != "All" and "orcid_id" in users.columns:
+        if users_orcid == "Has ORCID":
+            users = users[
+                users["orcid_id"].notna()
+                & (users["orcid_id"].astype(str).str.strip() != "")
+            ]
+        else:
+            users = users[
+                users["orcid_id"].isna()
+                | (users["orcid_id"].astype(str).str.strip() == "")
+            ]
+    if users_search:
+        users = users[
+            users["user_name"]
+            .astype(str)
+            .str.contains(users_search, case=False, na=False)
+        ]
+
+    metrics_users = compute_summary_metrics(
+        users, projects_raw, regs_raw, preprints_raw
+    )
+
     c1, c2, c3 = st.columns(3)
-    c1.metric("Total users", fmt(summary["total_users"]))
-    c2.metric("Users with ORCID", fmt(summary["has_orcid"]))
-    c3.metric("Monthly active users", fmt(summary["monthly_active"]))
+    c1.metric("Total users", fmt(metrics_users["total_users"]))
+    c2.metric("Users with ORCID", fmt(metrics_users["has_orcid"]))
+    c3.metric("Monthly active users", fmt(metrics_users["monthly_active"]))
 
     if users.empty:
         st.info("No users match the current filters.")
     else:
         df = users.copy()
-
-        # Storage in GB
         if "storage_byte_count" in df.columns:
             df["Total data stored on OSF (GB)"] = df["storage_byte_count"] / 1e9
 
@@ -555,21 +608,82 @@ elif page == "Users":
         existing = [c for c in cols if c in display.columns]
 
         st.markdown("#### User metrics (one row per affiliated user)")
-        st.dataframe(display[existing].sort_values("Name").reset_index(drop=True))
+        st.dataframe(
+            display[existing].sort_values("Name").reset_index(drop=True)
+        )
 
 
 # =====================================================
-# PROJECTS TAB
+# PROJECTS TAB (with its own filters)
 # =====================================================
 
 elif page == "Projects":
     st.subheader("Projects")
 
+    st.markdown("##### Filters (Projects tab)")
+    pcol1, pcol2, pcol3 = st.columns([2, 2, 2])
+
+    with pcol1:
+        projects_search = st.text_input(
+            "Search projects (title contains)",
+            value="",
+            key="projects_search",
+        ).strip()
+    with pcol2:
+        license_options = (
+            sorted(
+                projects_raw["rights.name"].dropna().unique().tolist()
+            )
+            if "rights.name" in projects_raw.columns
+            else []
+        )
+        if license_options:
+            projects_licenses = st.multiselect(
+                "License",
+                options=license_options,
+                default=license_options,
+                key="projects_licenses",
+            )
+        else:
+            projects_licenses = []
+    with pcol3:
+        region_options = (
+            sorted(
+                projects_raw["storageRegion.prefLabel"].dropna().unique().tolist()
+            )
+            if "storageRegion.prefLabel" in projects_raw.columns
+            else []
+        )
+        if region_options:
+            projects_regions = st.multiselect(
+                "Storage region",
+                options=region_options,
+                default=region_options,
+                key="projects_regions",
+            )
+        else:
+            projects_regions = []
+
+    projects = projects_raw.copy()
+    if projects_licenses and "rights.name" in projects.columns:
+        projects = projects[
+            projects["rights.name"].isin(projects_licenses)
+            | projects["rights.name"].isna()
+        ]
+    if projects_regions and "storageRegion.prefLabel" in projects.columns:
+        projects = projects[
+            projects["storageRegion.prefLabel"].isin(projects_regions)
+            | projects["storageRegion.prefLabel"].isna()
+        ]
+    if projects_search and "title" in projects.columns:
+        projects = projects[
+            projects["title"].astype(str).str.contains(projects_search, case=False, na=False)
+        ]
+
     if projects.empty:
         st.info("No projects match the current filters.")
     else:
         df = projects.copy()
-
         if "storageByteCount" in df.columns:
             df["Total data stored on OSF (GB)"] = df["storageByteCount"] / 1e9
 
@@ -622,17 +736,75 @@ elif page == "Projects":
 
 
 # =====================================================
-# REGISTRATIONS TAB
+# REGISTRATIONS TAB (with its own filters)
 # =====================================================
 
 elif page == "Registrations":
     st.subheader("Registrations")
 
+    st.markdown("##### Filters (Registrations tab)")
+    rcol1, rcol2, rcol3 = st.columns([2, 2, 2])
+
+    with rcol1:
+        regs_search = st.text_input(
+            "Search registrations (title contains)",
+            value="",
+            key="regs_search",
+        ).strip()
+    with rcol2:
+        license_options = (
+            sorted(
+                regs_raw["rights.name"].dropna().unique().tolist()
+            )
+            if "rights.name" in regs_raw.columns
+            else []
+        )
+        if license_options:
+            regs_licenses = st.multiselect(
+                "License",
+                options=license_options,
+                default=license_options,
+                key="regs_licenses",
+            )
+        else:
+            regs_licenses = []
+    with rcol3:
+        region_options = (
+            sorted(
+                regs_raw["storageRegion.prefLabel"].dropna().unique().tolist()
+            )
+            if "storageRegion.prefLabel" in regs_raw.columns
+            else []
+        )
+        if region_options:
+            regs_regions = st.multiselect(
+                "Storage region",
+                options=region_options,
+                default=region_options,
+                key="regs_regions",
+            )
+        else:
+            regs_regions = []
+
+    regs = regs_raw.copy()
+    if regs_licenses and "rights.name" in regs.columns:
+        regs = regs[
+            regs["rights.name"].isin(regs_licenses) | regs["rights.name"].isna()
+        ]
+    if regs_regions and "storageRegion.prefLabel" in regs.columns:
+        regs = regs[
+            regs["storageRegion.prefLabel"].isin(regs_regions)
+            | regs["storageRegion.prefLabel"].isna()
+        ]
+    if regs_search and "title" in regs.columns:
+        regs = regs[
+            regs["title"].astype(str).str.contains(regs_search, case=False, na=False)
+        ]
+
     if regs.empty:
         st.info("No registrations match the current filters.")
     else:
         df = regs.copy()
-
         if "storageByteCount" in df.columns:
             df["Total data stored on OSF (GB)"] = df["storageByteCount"] / 1e9
 
@@ -685,11 +857,49 @@ elif page == "Registrations":
 
 
 # =====================================================
-# PREPRINTS TAB
+# PREPRINTS TAB (with its own filters)
 # =====================================================
 
 elif page == "Preprints":
     st.subheader("Preprints")
+
+    st.markdown("##### Filters (Preprints tab)")
+    ppc1, ppc2 = st.columns([2, 2])
+
+    with ppc1:
+        preprints_search = st.text_input(
+            "Search preprints (title contains)",
+            value="",
+            key="preprints_search",
+        ).strip()
+    with ppc2:
+        license_options = (
+            sorted(
+                preprints_raw["rights.name"].dropna().unique().tolist()
+            )
+            if "rights.name" in preprints_raw.columns
+            else []
+        )
+        if license_options:
+            preprints_licenses = st.multiselect(
+                "License",
+                options=license_options,
+                default=license_options,
+                key="preprints_licenses",
+            )
+        else:
+            preprints_licenses = []
+
+    preprints = preprints_raw.copy()
+    if preprints_licenses and "rights.name" in preprints.columns:
+        preprints = preprints[
+            preprints["rights.name"].isin(preprints_licenses)
+            | preprints["rights.name"].isna()
+        ]
+    if preprints_search and "title" in preprints.columns:
+        preprints = preprints[
+            preprints["title"].astype(str).str.contains(preprints_search, case=False, na=False)
+        ]
 
     if preprints.empty:
         st.info("No preprints match the current filters.")
