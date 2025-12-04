@@ -1,4 +1,3 @@
-import io
 import datetime as dt
 
 import numpy as np
@@ -52,8 +51,8 @@ st.markdown(
 # ---------------------------
 def generate_demo_data(n_days: int = 180, n_users: int = 250) -> pd.DataFrame:
     """
-    Generate synthetic OSF Institutions–style usage data.
-    Each row ~ "event" (project/file/registration activity with size + visibility).
+    Synthetic OSFI-style data.
+    Each row ~ usage event for a project/registration/file/preprint.
     """
     today = dt.date.today()
     dates = pd.date_range(end=today, periods=n_days, freq="D")
@@ -61,7 +60,7 @@ def generate_demo_data(n_days: int = 180, n_users: int = 250) -> pd.DataFrame:
     institutions = ["Sample University", "Demo College", "Test Institute"]
     departments = ["Psychology", "Biology", "CS", "Economics", "Library"]
     countries = ["US", "UK", "DE", "NL", "ZA", "BR"]
-    resource_types = ["project", "registration", "file"]
+    resource_types = ["project", "registration", "file", "preprint"]
     visibility = ["public", "private"]
     storage_scale = [10_000, 50_000, 200_000, 1_000_000]  # bytes
 
@@ -69,7 +68,6 @@ def generate_demo_data(n_days: int = 180, n_users: int = 250) -> pd.DataFrame:
     rng = np.random.default_rng(42)
 
     for date in dates:
-        # number of events per day
         n_events = rng.integers(50, 200)
         for _ in range(n_events):
             user_id = f"user_{rng.integers(1, n_users + 1)}"
@@ -77,11 +75,10 @@ def generate_demo_data(n_days: int = 180, n_users: int = 250) -> pd.DataFrame:
             inst = rng.choice(institutions)
             dept = rng.choice(departments)
             country = rng.choice(countries)
-            rtype = rng.choice(resource_types, p=[0.5, 0.2, 0.3])
+            rtype = rng.choice(resource_types, p=[0.45, 0.2, 0.2, 0.15])
             vis = rng.choice(visibility, p=[0.6, 0.4])
             size = rng.choice(storage_scale) * abs(rng.normal(1, 0.5))
-
-            has_orcid = rng.random() < 0.35  # 35% adoption
+            has_orcid = rng.random() < 0.35  # 35% ORCID adoption (demo)
 
             rows.append(
                 {
@@ -116,7 +113,6 @@ def parse_uploaded_data(uploaded_file) -> pd.DataFrame | None:
         return None
 
     # Normalize some common column names
-    # Expect at least a 'date' or 'event_date' and 'user_id'
     date_cols = [c for c in df.columns if c.lower() in ["date", "event_date", "timestamp"]]
     if date_cols:
         date_col = date_cols[0]
@@ -132,7 +128,6 @@ def parse_uploaded_data(uploaded_file) -> pd.DataFrame | None:
 
 def ensure_date_column(df: pd.DataFrame) -> pd.DataFrame:
     if "date" not in df.columns:
-        # Try to infer; if none, create fake sequential dates
         df = df.copy()
         df["date"] = pd.date_range(
             end=dt.date.today(), periods=len(df), freq="D"
@@ -158,11 +153,23 @@ def compute_overall_metrics(df: pd.DataFrame) -> dict:
     )
 
     total_users = df["user_id"].nunique() if "user_id" in df.columns else None
-    total_projects = (
+
+    total_affiliated_projects = (
         df.loc[df.get("resource_type", "") == "project", "project_id"].nunique()
         if "project_id" in df.columns and "resource_type" in df.columns
         else None
     )
+    total_registrations = (
+        df.loc[df.get("resource_type", "") == "registration", "project_id"].nunique()
+        if "project_id" in df.columns and "resource_type" in df.columns
+        else None
+    )
+    total_preprints = (
+        df.loc[df.get("resource_type", "") == "preprint", "project_id"].nunique()
+        if "project_id" in df.columns and "resource_type" in df.columns
+        else None
+    )
+
     total_storage_gb = (
         df["size_bytes"].sum() / 1e9 if "size_bytes" in df.columns else None
     )
@@ -180,7 +187,9 @@ def compute_overall_metrics(df: pd.DataFrame) -> dict:
         "dau_30": dau_30,
         "mau_90": mau_90,
         "total_users": total_users,
-        "total_projects": total_projects,
+        "total_affiliated_projects": total_affiliated_projects,
+        "total_registrations": total_registrations,
+        "total_preprints": total_preprints,
         "total_storage_gb": total_storage_gb,
         "public_share": public_share,
         "orcid_share": orcid_share,
@@ -201,11 +210,18 @@ def format_metric(value, default="—", fmt="{:,}"):
 # Sidebar: navigation + upload
 # ---------------------------
 with st.sidebar:
-    st.markdown("### 📊 OSF Institutions Demo")
+    st.markdown("### 📊 OSF Institutions (Demo)")
 
+    # Tabs aligned with OSFI Metrics Dashboard, minus messaging/data
     page = st.radio(
-        "Sections",
-        ["Overview", "Users", "Projects & Activity", "Storage", "Data"],
+        "Tabs",
+        [
+            "Summary",
+            "Users",
+            "Projects",
+            "Registrations",
+            "Preprints",
+        ],
         index=0,
     )
 
@@ -218,8 +234,8 @@ with st.sidebar:
 
     st.markdown("---")
     st.caption(
-        "This is a demo dashboard inspired by the OSF Institutions member dashboard. "
-        "For illustration and training only."
+        "This is a demo inspired by the OSF Institutions Metrics Dashboard. "
+        "It is not connected to the live OSF."
     )
 
 
@@ -235,6 +251,58 @@ else:
 
 df = ensure_date_column(df)
 
+# ---------------------------
+# Global filters (similar to OSFI dashboard filters)
+# ---------------------------
+with st.sidebar:
+    st.markdown("### Filters")
+
+    min_date, max_date = df["date"].min(), df["date"].max()
+    date_range = st.date_input(
+        "Date range",
+        value=(min_date, max_date),
+        min_value=min_date,
+        max_value=max_date,
+    )
+    if isinstance(date_range, (tuple, list)):
+        start_date, end_date = date_range
+    else:
+        start_date, end_date = min_date, max_date
+
+    # Content type filter
+    if "resource_type" in df.columns:
+        all_types = sorted(df["resource_type"].unique().tolist())
+        selected_types = st.multiselect(
+            "Content types",
+            options=all_types,
+            default=all_types,
+        )
+    else:
+        selected_types = None
+
+    # Visibility filter
+    if "visibility" in df.columns:
+        all_vis = sorted(df["visibility"].unique().tolist())
+        selected_vis = st.multiselect(
+            "Visibility",
+            options=all_vis,
+            default=all_vis,
+        )
+    else:
+        selected_vis = None
+
+# Apply filters
+df_filtered = df.copy()
+df_filtered = df_filtered[
+    (df_filtered["date"] >= start_date) & (df_filtered["date"] <= end_date)
+]
+
+if selected_types is not None and len(selected_types) > 0:
+    df_filtered = df_filtered[df_filtered["resource_type"].isin(selected_types)]
+
+if selected_vis is not None and len(selected_vis) > 0:
+    df_filtered = df_filtered[df_filtered["visibility"].isin(selected_vis)]
+
 
 # ---------------------------
 # Header
@@ -243,9 +311,9 @@ st.markdown(
     """
     <div class="osf-header">
       <div>
-        <div class="osf-title">OSF Institutions — Demo Dashboard</div>
+        <div class="osf-title">OSF Institutions — Metrics Dashboard (Demo)</div>
         <div class="osf-subtitle">
-          Simulated institutional usage metrics for demonstration and onboarding.
+          Simulated institutional usage metrics to mirror the OSFI Metrics Dashboard structure.
         </div>
       </div>
       <div>
@@ -256,254 +324,297 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-
-metrics = compute_overall_metrics(df)
+metrics = compute_overall_metrics(df_filtered)
 
 st.caption(
-    f"Data range: up to **{metrics['latest_date']}** · "
-    f"Rows: **{len(df):,}**"
+    f"Filtered date range: **{start_date} → {end_date}** · "
+    f"Rows in current view: **{len(df_filtered):,}**"
 )
 
 
 # ---------------------------
-# Overview page
+# SUMMARY TAB
 # ---------------------------
-if page == "Overview":
+if page == "Summary":
     col1, col2, col3, col4 = st.columns(4)
-
     col1.metric("Active users (30d)", format_metric(metrics["dau_30"]))
     col2.metric("Active users (90d)", format_metric(metrics["mau_90"]))
-    col3.metric(
-        "Total users",
-        format_metric(metrics["total_users"]),
-    )
+    col3.metric("Total affiliated users", format_metric(metrics["total_users"]))
     col4.metric(
-        "Total projects",
-        format_metric(metrics["total_projects"]),
+        "Users with ORCID (%)",
+        format_metric(metrics["orcid_share"], fmt="{:,.1f}%"),
     )
 
-    col5, col6 = st.columns(2)
+    col5, col6, col7 = st.columns(3)
     col5.metric(
-        "Storage used (GB)",
-        format_metric(
-            metrics["total_storage_gb"], fmt="{:,.2f}"
-        ),
+        "Affiliated projects",
+        format_metric(metrics["total_affiliated_projects"]),
     )
     col6.metric(
+        "Registrations",
+        format_metric(metrics["total_registrations"]),
+    )
+    col7.metric(
+        "Preprints",
+        format_metric(metrics["total_preprints"]),
+    )
+
+    col8, col9 = st.columns(2)
+    col8.metric(
+        "Storage used (GB)",
+        format_metric(metrics["total_storage_gb"], fmt="{:,.2f}"),
+    )
+    col9.metric(
         "Public content (%)",
-        format_metric(
-            metrics["public_share"], fmt="{:,.1f}%"
-        ),
+        format_metric(metrics["public_share"], fmt="{:,.1f}%"),
     )
 
     st.markdown("### Activity over time")
-
-    by_date = df.groupby("date").agg(
+    by_date = df_filtered.groupby("date").agg(
         events=("user_id", "count"),
-        users=("user_id", "nunique") if "user_id" in df.columns else ("date", "count"),
+        users=("user_id", "nunique") if "user_id" in df_filtered.columns else ("date", "count"),
     )
 
     tab1, tab2 = st.tabs(["Events per day", "Unique users per day"])
     with tab1:
         st.line_chart(by_date["events"])
     with tab2:
-        if "user_id" in df.columns:
+        if "user_id" in df_filtered.columns:
             st.line_chart(by_date["users"])
         else:
             st.info("No user_id column available for unique user counts.")
 
-    st.markdown("### Resource type breakdown")
-    if "resource_type" in df.columns:
-        rt_counts = df["resource_type"].value_counts()
+    st.markdown("### Content mix (by type)")
+    if "resource_type" in df_filtered.columns:
+        rt_counts = df_filtered["resource_type"].value_counts()
         st.bar_chart(rt_counts)
     else:
         st.info("No resource_type column found in data.")
 
     st.markdown("### Visibility breakdown")
-    if "visibility" in df.columns:
-        vis_counts = df["visibility"].value_counts()
+    if "visibility" in df_filtered.columns:
+        vis_counts = df_filtered["visibility"].value_counts()
         st.bar_chart(vis_counts)
     else:
         st.info("No visibility column found in data.")
 
 
 # ---------------------------
-# Users page
+# USERS TAB
 # ---------------------------
 elif page == "Users":
-    st.subheader("User adoption and engagement")
+    st.subheader("Users")
 
     col1, col2, col3 = st.columns(3)
-    col1.metric("Total users", format_metric(metrics["total_users"]))
-    if metrics["orcid_share"] is not None:
-        col2.metric(
-            "Users with ORCID (%)",
-            format_metric(metrics["orcid_share"], fmt="{:,.1f}%"),
-        )
-    else:
-        col2.metric("Users with ORCID (%)", "—")
+    col1.metric("Total affiliated users", format_metric(metrics["total_users"]))
+    col2.metric(
+        "Users with ORCID (%)",
+        format_metric(metrics["orcid_share"], fmt="{:,.1f}%"),
+    )
     col3.metric(
         "Active users (30d)",
         format_metric(metrics["dau_30"]),
     )
 
-    st.markdown("#### Users by country")
-    if "country" in df.columns and "user_id" in df.columns:
-        users_by_country = (
-            df.groupby("country")["user_id"].nunique().sort_values(ascending=False)
-        )
-        st.bar_chart(users_by_country)
-    else:
-        st.info("No country and/or user_id column available.")
-
     st.markdown("#### Users by department")
-    if "department" in df.columns and "user_id" in df.columns:
+    if "department" in df_filtered.columns and "user_id" in df_filtered.columns:
         users_by_dept = (
-            df.groupby("department")["user_id"].nunique().sort_values(ascending=False)
+            df_filtered.groupby("department")["user_id"]
+            .nunique()
+            .sort_values(ascending=False)
         )
         st.bar_chart(users_by_dept)
     else:
         st.info("No department and/or user_id column available.")
 
-    with st.expander("Sample user-level table"):
-        if "user_id" in df.columns:
-            user_summary = (
-                df.groupby("user_id")
-                .agg(
-                    events=("date", "count"),
-                    first_seen=("date", "min"),
-                    last_seen=("date", "max"),
-                )
-                .sort_values("events", ascending=False)
-                .head(50)
+    st.markdown("#### Users by country")
+    if "country" in df_filtered.columns and "user_id" in df_filtered.columns:
+        users_by_country = (
+            df_filtered.groupby("country")["user_id"]
+            .nunique()
+            .sort_values(ascending=False)
+        )
+        st.bar_chart(users_by_country)
+    else:
+        st.info("No country and/or user_id column available.")
+
+    st.markdown("#### User table (sample)")
+    if "user_id" in df_filtered.columns:
+        user_summary = (
+            df_filtered.groupby("user_id")
+            .agg(
+                events=("date", "count"),
+                first_seen=("date", "min"),
+                last_seen=("date", "max"),
+                projects=("project_id", "nunique"),
             )
-            st.dataframe(user_summary)
+            .sort_values("events", ascending=False)
+            .head(200)
+        )
+        st.dataframe(user_summary)
+    else:
+        st.info("No user_id column found.")
+
+
+# ---------------------------
+# PROJECTS TAB
+# ---------------------------
+elif page == "Projects":
+    st.subheader("Projects")
+
+    if "resource_type" not in df_filtered.columns or "project_id" not in df_filtered.columns:
+        st.info("Need resource_type and project_id columns to show project metrics.")
+    else:
+        proj_df = df_filtered[df_filtered["resource_type"] == "project"].copy()
+
+        col1, col2 = st.columns(2)
+        col1.metric(
+            "Affiliated projects",
+            format_metric(
+                proj_df["project_id"].nunique() if not proj_df.empty else 0
+            ),
+        )
+        if "visibility" in proj_df.columns:
+            proj_vis = (
+                proj_df.groupby("project_id")["visibility"]
+                .agg(lambda x: (x == "public").any())
+                .value_counts(normalize=True)
+            )
+            public_pct = float(proj_vis.get(True, 0.0) * 100)
         else:
-            st.info("No user_id column found.")
+            public_pct = None
+        col2.metric(
+            "Projects with public content (%)",
+            format_metric(public_pct, fmt="{:,.1f}%"),
+        )
+
+        st.markdown("#### New projects over time")
+        proj_first_seen = (
+            proj_df.groupby("project_id")["date"].min().value_counts().sort_index()
+        )
+        st.line_chart(proj_first_seen)
+
+        st.markdown("#### Project visibility")
+        if "visibility" in proj_df.columns:
+            vis_counts = proj_df["visibility"].value_counts()
+            st.bar_chart(vis_counts)
+        else:
+            st.info("No visibility column found in project data.")
+
+        st.markdown("#### Project table (sample)")
+        proj_summary = (
+            proj_df.groupby("project_id")
+            .agg(
+                events=("date", "count"),
+                first_seen=("date", "min"),
+                last_seen=("date", "max"),
+                total_size_bytes=("size_bytes", "sum") if "size_bytes" in proj_df.columns else ("date", "count"),
+            )
+            .sort_values("events", ascending=False)
+            .head(200)
+        )
+        if "total_size_bytes" in proj_summary.columns:
+            proj_summary["total_size_gb"] = proj_summary["total_size_bytes"] / 1e9
+        st.dataframe(proj_summary)
 
 
 # ---------------------------
-# Projects & Activity page
+# REGISTRATIONS TAB
 # ---------------------------
-elif page == "Projects & Activity":
-    st.subheader("Projects and registrations")
+elif page == "Registrations":
+    st.subheader("Registrations")
 
-    if "project_id" in df.columns:
-        proj_counts = (
-            df.groupby("project_id")
+    if "resource_type" not in df_filtered.columns or "project_id" not in df_filtered.columns:
+        st.info("Need resource_type and project_id columns to show registration metrics.")
+    else:
+        reg_df = df_filtered[df_filtered["resource_type"] == "registration"].copy()
+
+        col1, col2 = st.columns(2)
+        col1.metric(
+            "Registrations",
+            format_metric(
+                reg_df["project_id"].nunique() if not reg_df.empty else 0
+            ),
+        )
+        if "visibility" in reg_df.columns:
+            reg_vis = reg_df["visibility"].value_counts(normalize=True)
+            public_pct = float(reg_vis.get("public", 0.0) * 100)
+        else:
+            public_pct = None
+        col2.metric(
+            "Public registrations (%)",
+            format_metric(public_pct, fmt="{:,.1f}%"),
+        )
+
+        st.markdown("#### Registrations over time")
+        if not reg_df.empty:
+            reg_first_seen = (
+                reg_df.groupby("project_id")["date"].min().value_counts().sort_index()
+            )
+            st.line_chart(reg_first_seen)
+        else:
+            st.info("No registrations in current filtered view.")
+
+        st.markdown("#### Registration table (sample)")
+        reg_summary = (
+            reg_df.groupby("project_id")
             .agg(
                 events=("date", "count"),
                 first_seen=("date", "min"),
                 last_seen=("date", "max"),
             )
             .sort_values("events", ascending=False)
+            .head(200)
         )
-
-        st.markdown("#### Top projects by activity")
-        st.dataframe(proj_counts.head(50))
-    else:
-        st.info("No project_id column found.")
-
-    st.markdown("#### Project visibility")
-    if "project_id" in df.columns and "visibility" in df.columns:
-        proj_vis = (
-            df.groupby(["project_id", "visibility"])
-            .size()
-            .unstack(fill_value=0)
-        )
-        vis_summary = proj_vis.gt(0).sum().sort_values(ascending=False)
-        st.bar_chart(vis_summary)
-    else:
-        st.info("Need both project_id and visibility columns to show this chart.")
-
-    st.markdown("#### Activity heatmap (day-of-week)")
-    df["dow"] = pd.to_datetime(df["date"]).dt.day_name()
-    activity_dow = df["dow"].value_counts().reindex(
-        ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
-    )
-    st.bar_chart(activity_dow)
+        st.dataframe(reg_summary)
 
 
 # ---------------------------
-# Storage page
+# PREPRINTS TAB
 # ---------------------------
-elif page == "Storage":
-    st.subheader("Storage usage")
+elif page == "Preprints":
+    st.subheader("Preprints")
 
-    if "size_bytes" not in df.columns:
-        st.info("No size_bytes column found. Cannot compute storage metrics.")
+    if "resource_type" not in df_filtered.columns or "project_id" not in df_filtered.columns:
+        st.info("Need resource_type and project_id columns to show preprint metrics.")
     else:
-        df["size_gb"] = df["size_bytes"] / 1e9
+        pp_df = df_filtered[df_filtered["resource_type"] == "preprint"].copy()
 
         col1, col2 = st.columns(2)
         col1.metric(
-            "Total storage (GB)",
-            format_metric(df["size_gb"].sum(), fmt="{:,.2f}"),
+            "Preprints",
+            format_metric(
+                pp_df["project_id"].nunique() if not pp_df.empty else 0
+            ),
         )
+        if "visibility" in pp_df.columns:
+            pp_vis = pp_df["visibility"].value_counts(normalize=True)
+            public_pct = float(pp_vis.get("public", 0.0) * 100)
+        else:
+            public_pct = None
         col2.metric(
-            "Median object size (MB)",
-            format_metric(df["size_bytes"].median() / 1e6, fmt="{:,.2f}"),
+            "Public preprints (%)",
+            format_metric(public_pct, fmt="{:,.1f}%"),
         )
 
-        st.markdown("#### Storage over time")
-        storage_by_date = df.groupby("date")["size_gb"].sum().cumsum()
-        st.line_chart(storage_by_date)
-
-        st.markdown("#### Storage by resource type")
-        if "resource_type" in df.columns:
-            storage_by_type = (
-                df.groupby("resource_type")["size_gb"].sum().sort_values(ascending=False)
+        st.markdown("#### Preprints over time")
+        if not pp_df.empty:
+            pp_first_seen = (
+                pp_df.groupby("project_id")["date"].min().value_counts().sort_index()
             )
-            st.bar_chart(storage_by_type)
+            st.line_chart(pp_first_seen)
         else:
-            st.info("No resource_type column found.")
+            st.info("No preprints in current filtered view.")
 
-        st.markdown("#### Storage by visibility")
-        if "visibility" in df.columns:
-            storage_by_vis = (
-                df.groupby("visibility")["size_gb"].sum().sort_values(ascending=False)
+        st.markdown("#### Preprint table (sample)")
+        pp_summary = (
+            pp_df.groupby("project_id")
+            .agg(
+                events=("date", "count"),
+                first_seen=("date", "min"),
+                last_seen=("date", "max"),
             )
-            st.bar_chart(storage_by_vis)
-        else:
-            st.info("No visibility column found.")
-
-
-# ---------------------------
-# Data page (schema & download)
-# ---------------------------
-elif page == "Data":
-    st.subheader("Data preview & template")
-
-    st.markdown("#### Current data sample")
-    st.dataframe(df.head(50))
-
-    st.markdown("#### Expected / useful columns")
-
-    st.markdown(
-        """
-        The dashboard works best when your CSV/JSON has columns like:
-
-        - `date` (or `event_date`, `timestamp`) – will be normalized to `date`
-        - `user_id` – pseudonymous user identifier
-        - `project_id` – project or registration ID
-        - `institution` – institutional affiliation string
-        - `department` – department / unit
-        - `country` – country code or label
-        - `resource_type` – e.g., `project`, `registration`, `file`
-        - `visibility` – `public` or `private`
-        - `size_bytes` – size of file / object in bytes
-        - `has_orcid` – `True/False` or 1/0 flag
-        """
-    )
-
-    st.markdown("#### Download demo dataset as CSV")
-
-    demo_df = generate_demo_data(n_days=60, n_users=100)
-    csv_buf = io.StringIO()
-    demo_df.to_csv(csv_buf, index=False)
-    st.download_button(
-        "Download demo_data.csv",
-        data=csv_buf.getvalue(),
-        file_name="osf_institutions_demo_data.csv",
-        mime="text/csv",
-    )
+            .sort_values("events", ascending=False)
+            .head(200)
+        )
+        st.dataframe(pp_summary)
