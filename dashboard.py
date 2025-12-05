@@ -75,15 +75,24 @@ st.markdown(
         color: #ffffff;
     }
 
-    /* Customize panel styling */
+    /* Compact customize dropdown-style box */
     .customize-box {
         background-color: #ffffff;
         border: 1px solid #d0d4da;
         border-radius: 8px;
-        padding: 0.5rem 0.75rem 0.25rem 0.75rem;
-        margin-top: 0.25rem;
-        max-width: 320px;
-        box-shadow: 0 2px 4px rgba(15, 23, 42, 0.08);
+        padding: 0.4rem 0.5rem 0.25rem 0.5rem;
+        margin-top: 0.35rem;
+        max-width: 260px;
+        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15);
+    }
+    .customize-box .stTextInput>div>div>input {
+        font-size: 0.8rem;
+        padding-top: 0.15rem;
+        padding-bottom: 0.15rem;
+    }
+    .customize-box label {
+        font-size: 0.85rem;
+        padding: 0.1rem 0;
     }
 
     /* Hide sidebar completely */
@@ -306,7 +315,6 @@ def prepare_link_columns(df: pd.DataFrame) -> pd.DataFrame:
             return ""
         df["DOI"] = df["DOI"].apply(to_doi_url)
 
-    # Nothing special for OSF Link; it's already a URL in the exports.
     return df
 
 
@@ -320,7 +328,12 @@ def build_link_column_config(df: pd.DataFrame):
 
 
 def customize_columns_box(all_existing, prefix: str):
-    """OSF-style 'Customize' panel with search + checkbox list."""
+    """
+    OSF-style 'Customize' panel with search + checkbox list.
+
+    This only updates st.session_state; selected columns are read separately
+    via get_saved_columns(), so the panel can live under the Customize button.
+    """
     state_key = f"{prefix}_cols_state"
     if state_key not in st.session_state:
         st.session_state[state_key] = {c: True for c in all_existing}
@@ -329,11 +342,8 @@ def customize_columns_box(all_existing, prefix: str):
     st.markdown('<div class="customize-box">', unsafe_allow_html=True)
     search = st.text_input("Show columns", key=f"{prefix}_col_search")
     search_lower = search.lower().strip()
-    filtered = [
-        c for c in all_existing if search_lower in c.lower()
-    ]
+    filtered = [c for c in all_existing if search_lower in c.lower()]
 
-    selected_cols = []
     for col in filtered:
         checked = st.checkbox(
             col,
@@ -341,16 +351,9 @@ def customize_columns_box(all_existing, prefix: str):
             key=f"{prefix}_col_{col}",
         )
         state[col] = checked
-        if checked:
-            selected_cols.append(col)
 
     st.markdown("</div>", unsafe_allow_html=True)
     st.session_state[state_key] = state
-
-    if not selected_cols:
-        # fall back to whatever is checked overall, or all
-        selected_cols = [c for c, v in state.items() if v] or all_existing
-    return selected_cols
 
 
 def get_saved_columns(all_existing, prefix: str):
@@ -578,6 +581,8 @@ with tab_users:
             on_click=toggle_users_customize,
             use_container_width=True,
         )
+        if st.session_state["users_show_customize"]:
+            customize_columns_box([], "users_placeholder")  # placeholder; real call later
 
     # Filters row
     st.markdown("##### Filters")
@@ -667,11 +672,12 @@ with tab_users:
         ]
         all_existing = [c for c in all_cols if c in display.columns]
 
+        # Render actual customize box under the button, with correct list
         if st.session_state["users_show_customize"]:
-            selected_cols = customize_columns_box(all_existing, "users")
-        else:
-            selected_cols = get_saved_columns(all_existing, "users")
+            with ctop2:
+                customize_columns_box(all_existing, "users")
 
+        selected_cols = get_saved_columns(all_existing, "users")
         display = display[selected_cols]
 
         csv_bytes = display.to_csv(index=False).encode("utf-8")
@@ -996,11 +1002,12 @@ with tab_projects:
             ]
             all_existing = [c for c in all_cols if c in display.columns]
 
+            # Show compact customize panel under Customize button
             if st.session_state["projects_show_customize"]:
-                selected_cols = customize_columns_box(all_existing, "projects")
-            else:
-                selected_cols = get_saved_columns(all_existing, "projects")
+                with top_customize:
+                    customize_columns_box(all_existing, "projects")
 
+            selected_cols = get_saved_columns(all_existing, "projects")
             display = display[selected_cols]
 
             csv_bytes = display.to_csv(index=False).encode("utf-8")
@@ -1249,10 +1256,10 @@ with tab_regs:
             all_existing = [c for c in all_cols if c in display.columns]
 
             if st.session_state["regs_show_customize"]:
-                selected_cols = customize_columns_box(all_existing, "regs")
-            else:
-                selected_cols = get_saved_columns(all_existing, "regs")
+                with top_customize:
+                    customize_columns_box(all_existing, "regs")
 
+            selected_cols = get_saved_columns(all_existing, "regs")
             display = display[selected_cols]
 
             csv_bytes = display.to_csv(index=False).encode("utf-8")
@@ -1448,10 +1455,10 @@ with tab_preprints:
             all_existing = [c for c in all_cols if c in display.columns]
 
             if st.session_state["preprints_show_customize"]:
-                selected_cols = customize_columns_box(all_existing, "preprints")
-            else:
-                selected_cols = get_saved_columns(all_existing, "preprints")
+                with top_customize:
+                    customize_columns_box(all_existing, "preprints")
 
+            selected_cols = get_saved_columns(all_existing, "preprints")
             display = display[selected_cols]
 
             csv_bytes = display.to_csv(index=False).encode("utf-8")
