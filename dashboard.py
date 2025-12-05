@@ -16,8 +16,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
-INSTITUTION_NAME = "Center For Open Science [Test]"
-INSTITUTION_LOGO_URL = "https://osf.io/static/img/cos-white.svg"
+DATA_DIR = Path(__file__).parent
+DATA_FILE = DATA_DIR / "osfi_dashboard_data_with_branding.csv"
 
 st.markdown(
     """
@@ -116,50 +116,48 @@ st.markdown(
 # DATA LOADING
 # =====================================================
 
-DATA_DIR = Path(__file__).parent
-
-USERS_CSV = DATA_DIR / "institution-user-metrics_2025-12.csv"
-PROJECTS_CSV = DATA_DIR / "2025-12-04_projects-search-results.csv"
-REGS_CSV = DATA_DIR / "2025-12-04_registrations-search-results.csv"
-PREPRINTS_CSV = DATA_DIR / "2025-12-04_preprints-search-results.csv"
-
-
 @st.cache_data
-def load_users(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path)
-
-
-@st.cache_data
-def load_projects(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path)
-
-
-@st.cache_data
-def load_regs(path: Path) -> pd.DataFrame:
-    return pd.read_csv(path)
-
-
-@st.cache_data
-def load_preprints(path: Path) -> pd.DataFrame:
+def load_data(path: Path) -> pd.DataFrame:
     return pd.read_csv(path)
 
 
 try:
-    users_raw = load_users(USERS_CSV)
-    projects_raw = load_projects(PROJECTS_CSV)
-    regs_raw = load_regs(REGS_CSV)
-    preprints_raw = load_preprints(PREPRINTS_CSV)
+    data = load_data(DATA_FILE)
 except Exception as e:
     st.error(
-        f"Error loading default CSVs: {e}\n\n"
-        "Make sure the four OSFI export CSV files are in the same directory as this app."
+        f"Error loading unified CSV: {e}\n\n"
+        "Make sure osfi_dashboard_data_with_branding.csv is in the same directory as this app."
     )
     st.stop()
+
+# Branding (same on every row; just grab first non-empty)
+branding_name = (
+    data.get("branding_institution_name", pd.Series([], dtype=str))
+    .dropna()
+    .astype(str)
+)
+branding_logo = (
+    data.get("branding_institution_logo_url", pd.Series([], dtype=str))
+    .dropna()
+    .astype(str)
+)
+
+INSTITUTION_NAME = branding_name.iloc[0] if len(branding_name) else "OSF Institution [Demo]"
+INSTITUTION_LOGO_URL = (
+    branding_logo.iloc[0]
+    if len(branding_logo)
+    else "https://osf.io/static/img/cos-white.svg"
+)
+
+# Split by object_type
+users_raw = data[data["object_type"] == "user"].copy()
+projects_raw = data[data["object_type"] == "project"].copy()
+regs_raw = data[data["object_type"] == "registration"].copy()
+preprints_raw = data[data["object_type"] == "preprint"].copy()
 
 # =====================================================
 # HELPERS
 # =====================================================
-
 
 def fmt(value, default="—", fmt_str="{:,}"):
     if value is None:
@@ -170,8 +168,9 @@ def fmt(value, default="—", fmt_str="{:,}"):
         return str(value)
 
 
-def compute_summary_metrics(users_df, projects_df, regs_df, preprints_df):
+def compute_summary_metrics(all_df, users_df, projects_df, regs_df, preprints_df):
     total_users = len(users_df)
+
     has_orcid = (
         users_df["orcid_id"].notna()
         & (users_df["orcid_id"].astype(str).str.strip() != "")
@@ -195,16 +194,19 @@ def compute_summary_metrics(users_df, projects_df, regs_df, preprints_df):
     total_regs = len(regs_df)
     total_preprints = len(preprints_df)
 
-    total_files = (
-        users_df["public_file_count"].sum()
-        if "public_file_count" in users_df.columns
-        else None
-    )
-    total_storage_gb = (
-        users_df["storage_byte_count"].sum() / 1e9
-        if "storage_byte_count" in users_df.columns
-        else None
-    )
+    total_files = None
+    if "public_file_count" in users_df.columns:
+        total_files = pd.to_numeric(
+            users_df["public_file_count"], errors="coerce"
+        ).fillna(0).sum()
+
+    total_storage_gb = None
+    if "storage_bytes" in all_df.columns:
+        total_storage_gb = (
+            pd.to_numeric(all_df["storage_bytes"], errors="coerce")
+            .fillna(0)
+            .sum() / 1e9
+        )
 
     return {
         "report_month": report_month,
@@ -251,7 +253,6 @@ def bar_chart_from_series(series: pd.Series, title: str, top_n: int = 10):
 
 
 def get_page_df(df: pd.DataFrame, page_key: str, page_size: int = 10):
-    """Return the slice for the current page, and total row count."""
     total_rows = len(df)
     if total_rows == 0:
         return df, total_rows
@@ -268,7 +269,6 @@ def get_page_df(df: pd.DataFrame, page_key: str, page_size: int = 10):
 
 
 def render_pagination_controls(page_key: str, total_rows: int, page_size: int = 10):
-    """Render OSF-style pagination controls under the table."""
     if total_rows <= page_size:
         return
 
@@ -301,7 +301,6 @@ def render_pagination_controls(page_key: str, total_rows: int, page_size: int = 
 
 
 def prepare_link_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Convert obvious link-ish columns so Streamlit can treat them as links."""
     df = df.copy()
     if "DOI" in df.columns:
         def to_doi_url(x):
@@ -314,7 +313,6 @@ def prepare_link_columns(df: pd.DataFrame) -> pd.DataFrame:
                 return "https://doi.org/" + s
             return ""
         df["DOI"] = df["DOI"].apply(to_doi_url)
-
     return df
 
 
@@ -328,12 +326,6 @@ def build_link_column_config(df: pd.DataFrame):
 
 
 def customize_columns_box(all_existing, prefix: str):
-    """
-    OSF-style 'Customize' panel with search + checkbox list.
-
-    This only updates st.session_state; selected columns are read separately
-    via get_saved_columns(), so the panel can live under the Customize button.
-    """
     state_key = f"{prefix}_cols_state"
     if state_key not in st.session_state:
         st.session_state[state_key] = {c: True for c in all_existing}
@@ -357,7 +349,6 @@ def customize_columns_box(all_existing, prefix: str):
 
 
 def get_saved_columns(all_existing, prefix: str):
-    """When customize panel is closed, respect last saved column choices."""
     state_key = f"{prefix}_cols_state"
     if state_key not in st.session_state:
         return all_existing
@@ -371,7 +362,7 @@ def get_saved_columns(all_existing, prefix: str):
 # =====================================================
 
 global_summary = compute_summary_metrics(
-    users_raw, projects_raw, regs_raw, preprints_raw
+    data, users_raw, projects_raw, regs_raw, preprints_raw
 )
 report_month_label = (
     f"Report month: {global_summary['report_month']}"
@@ -417,9 +408,7 @@ st.markdown(
 with tab_summary:
     st.subheader("Summary")
 
-    summary = compute_summary_metrics(
-        users_raw, projects_raw, regs_raw, preprints_raw
-    )
+    summary = global_summary
 
     r1c1, r1c2, r1c3, r1c4 = st.columns(4)
     r2c1, r2c2, r2c3, r2c4 = st.columns(4)
@@ -444,6 +433,7 @@ with tab_summary:
 
     a1, a2, a3 = st.columns(3)
 
+    # Users by department
     with a1:
         st.markdown("#### Total Users by Department")
         if "department" in users_raw.columns:
@@ -458,6 +448,7 @@ with tab_summary:
             labels, values = [], []
         donut_chart(labels, values, title="Total Users by Department")
 
+    # Public vs Private projects
     with a2:
         st.markdown("#### Public vs Private Projects")
         proj_labels, proj_values = [], []
@@ -469,6 +460,7 @@ with tab_summary:
             proj_values = vis_counts.values.tolist()
         donut_chart(proj_labels, proj_values, title="Public vs Private Projects")
 
+    # Public vs Embargoed regs
     with a3:
         st.markdown("#### Public vs Embargoed Registrations")
         reg_labels, reg_values = [], []
@@ -501,10 +493,11 @@ with tab_summary:
         donut_chart(labels, values, title="Total OSF Objects")
 
     with b2:
+        # Licenses from projects + regs + preprints
         all_licenses = []
         for df_ in (projects_raw, regs_raw, preprints_raw):
-            if "rights.name" in df_.columns:
-                all_licenses.append(df_["rights.name"])
+            if "license_name" in df_.columns:
+                all_licenses.append(df_["license_name"])
         if all_licenses:
             license_series = pd.concat(all_licenses, ignore_index=True).value_counts()
         else:
@@ -512,27 +505,14 @@ with tab_summary:
         bar_chart_from_series(license_series, "Top 10 Licenses")
 
     with b3:
-        addons_counts = None
-        try:
-            addons_csv = DATA_DIR / "summary_addons.csv"
-            if addons_csv.exists():
-                df_addons = pd.read_csv(addons_csv)
-                if {"addon", "count"} <= set(df_addons.columns):
-                    addons_counts = (
-                        df_addons.set_index("addon")["count"].astype(int)
-                    )
-        except Exception:
-            addons_counts = None
-
-        if addons_counts is None:
-            if "hasOsfAddon.prefLabel" in projects_raw.columns:
-                addons_counts = (
-                    projects_raw["hasOsfAddon.prefLabel"]
-                    .dropna()
-                    .value_counts()
-                )
-            else:
-                addons_counts = pd.Series(dtype=int)
+        # Add-ons from projects (addon_names, possibly | separated)
+        if "addon_names" in projects_raw.columns:
+            addons_series = projects_raw["addon_names"].dropna().astype(str)
+            # Split pipe-separated lists into individual values
+            exploded = addons_series.str.split("|").explode().str.strip()
+            addons_counts = exploded[exploded != ""].value_counts()
+        else:
+            addons_counts = pd.Series(dtype=int)
 
         bar_chart_from_series(addons_counts, "Top 10 Add-ons")
 
@@ -541,8 +521,8 @@ with tab_summary:
     with c1:
         region_series_parts = []
         for df_ in (projects_raw, regs_raw):
-            if "storageRegion.prefLabel" in df_.columns:
-                region_series_parts.append(df_["storageRegion.prefLabel"])
+            if "storage_region" in df_.columns:
+                region_series_parts.append(df_["storage_region"])
         if region_series_parts:
             region_counts = (
                 pd.concat(region_series_parts, ignore_index=True)
@@ -566,6 +546,7 @@ with tab_users:
     if "users_show_customize" not in st.session_state:
         st.session_state["users_show_customize"] = False
 
+    # Top row: count + customize + download
     ctop1, ctop2, ctop3 = st.columns([4, 1, 1])
     count_placeholder = ctop1.empty()
 
@@ -581,8 +562,6 @@ with tab_users:
             on_click=toggle_users_customize,
             use_container_width=True,
         )
-        if st.session_state["users_show_customize"]:
-            customize_columns_box([], "users_placeholder")  # placeholder; real call later
 
     # Filters row
     st.markdown("##### Filters")
@@ -635,22 +614,25 @@ with tab_users:
         st.info("No users match the current filters.")
     else:
         df = users.copy()
-        if "storage_byte_count" in df.columns:
-            df["Total data stored on OSF (GB)"] = df["storage_byte_count"] / 1e9
+        if "storage_bytes" in df.columns:
+            df["Total data stored on OSF (GB)"] = (
+                pd.to_numeric(df["storage_bytes"], errors="coerce")
+                .fillna(0) / 1e9
+            )
 
         display = df.rename(
             columns={
-                "user_name": "Name",
+                "name_or_title": "Name",
                 "department": "Department",
                 "orcid_id": "ORCID iD",
-                "account_creation_date": "Account created (YYYY-MM)",
+                "report_yearmonth": "Report month (YYYY-MM)",
                 "month_last_login": "Month last login (YYYY-MM)",
                 "month_last_active": "Month last active (YYYY-MM)",
                 "public_projects": "Public projects",
                 "private_projects": "Private projects",
-                "public_registration_count": "Public registrations",
-                "embargoed_registration_count": "Embargoed registrations",
-                "published_preprint_count": "Published preprints",
+                "public_registrations": "Public registrations",
+                "embargoed_registrations": "Embargoed registrations",
+                "published_preprints": "Published preprints",
                 "public_file_count": "Public files",
             }
         )
@@ -666,13 +648,12 @@ with tab_users:
             "Published preprints",
             "Public files",
             "Total data stored on OSF (GB)",
-            "Account created (YYYY-MM)",
+            "Report month (YYYY-MM)",
             "Month last login (YYYY-MM)",
             "Month last active (YYYY-MM)",
         ]
         all_existing = [c for c in all_cols if c in display.columns]
 
-        # Render actual customize box under the button, with correct list
         if st.session_state["users_show_customize"]:
             with ctop2:
                 customize_columns_box(all_existing, "users")
@@ -693,7 +674,9 @@ with tab_users:
 
         st.markdown("#### Results")
         display_links = prepare_link_columns(display)
-        page_df, total_rows = get_page_df(display_links, page_key="users_page", page_size=10)
+        page_df, total_rows = get_page_df(
+            display_links, page_key="users_page", page_size=10
+        )
         col_cfg = build_link_column_config(page_df)
         st.dataframe(page_df, hide_index=True, column_config=col_cfg)
         render_pagination_controls("users_page", total_rows, page_size=10)
@@ -758,10 +741,14 @@ with tab_projects:
             st.markdown("#### Filter By")
 
             # Creator
-            if "creator.name" in projects_raw.columns:
+            if "creator_names" in projects_raw.columns:
                 with st.expander("Creator", expanded=False):
                     creator_options = sorted(
-                        projects_raw["creator.name"].dropna().unique().tolist()
+                        projects_raw["creator_names"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     creators_selected = st.multiselect(
                         "Creator name",
@@ -771,10 +758,10 @@ with tab_projects:
                     )
 
             # Date created (year)
-            if "dateCreated" in projects_raw.columns:
+            if "created_date" in projects_raw.columns:
                 with st.expander("Date created", expanded=False):
                     years = (
-                        pd.to_datetime(projects_raw["dateCreated"], errors="coerce")
+                        pd.to_datetime(projects_raw["created_date"], errors="coerce")
                         .dt.year.dropna()
                         .astype(int)
                         .unique()
@@ -790,10 +777,14 @@ with tab_projects:
                     )
 
             # Funder
-            if "funder.name" in projects_raw.columns:
+            if "funder_names" in projects_raw.columns:
                 with st.expander("Funder", expanded=False):
                     funder_options = sorted(
-                        projects_raw["funder.name"].dropna().unique().tolist()
+                        projects_raw["funder_names"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     funders_selected = st.multiselect(
                         "Funder name",
@@ -803,14 +794,14 @@ with tab_projects:
                     )
 
             # Subject
-            subj_col = next(
-                (c for c in projects_raw.columns if "subject" in c.lower()),
-                None,
-            )
-            if subj_col:
+            if "subject_terms" in projects_raw.columns:
                 with st.expander("Subject", expanded=False):
                     subj_options = sorted(
-                        projects_raw[subj_col].dropna().unique().tolist()
+                        projects_raw["subject_terms"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     subjects_selected = st.multiselect(
                         "Subject",
@@ -820,10 +811,14 @@ with tab_projects:
                     )
 
             # License
-            if "rights.name" in projects_raw.columns:
+            if "license_name" in projects_raw.columns:
                 with st.expander("License", expanded=False):
                     license_options = sorted(
-                        projects_raw["rights.name"].dropna().unique().tolist()
+                        projects_raw["license_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     licenses_selected = st.multiselect(
                         "License",
@@ -833,11 +828,12 @@ with tab_projects:
                     )
 
             # Resource type
-            if "resourceNature.displayLabel" in projects_raw.columns:
+            if "resource_type" in projects_raw.columns:
                 with st.expander("Resource type", expanded=False):
                     rt_options = sorted(
-                        projects_raw["resourceNature.displayLabel"]
+                        projects_raw["resource_type"]
                         .dropna()
+                        .astype(str)
                         .unique()
                         .tolist()
                     )
@@ -849,18 +845,14 @@ with tab_projects:
                     )
 
             # Institution
-            inst_col_raw = next(
-                (
-                    c
-                    for c in projects_raw.columns
-                    if "institution" in c.lower() and "name" in c.lower()
-                ),
-                None,
-            )
-            if inst_col_raw:
+            if "institution_name" in projects_raw.columns:
                 with st.expander("Institution", expanded=False):
                     inst_options = sorted(
-                        projects_raw[inst_col_raw].dropna().unique().tolist()
+                        projects_raw["institution_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     institutions_selected = st.multiselect(
                         "Institution",
@@ -870,14 +862,14 @@ with tab_projects:
                     )
 
             # Is part of collection
-            coll_col_raw = next(
-                (c for c in projects_raw.columns if "collection" in c.lower()),
-                None,
-            )
-            if coll_col_raw:
+            if "collection_name" in projects_raw.columns:
                 with st.expander("Is part of collection", expanded=False):
                     coll_options = sorted(
-                        projects_raw[coll_col_raw].dropna().unique().tolist()
+                        projects_raw["collection_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     collections_selected = st.multiselect(
                         "Collection",
@@ -887,11 +879,12 @@ with tab_projects:
                     )
 
             # Storage region
-            if "storageRegion.prefLabel" in projects_raw.columns:
+            if "storage_region" in projects_raw.columns:
                 with st.expander("Storage region", expanded=False):
                     region_options = sorted(
-                        projects_raw["storageRegion.prefLabel"]
+                        projects_raw["storage_region"]
                         .dropna()
+                        .astype(str)
                         .unique()
                         .tolist()
                     )
@@ -904,59 +897,41 @@ with tab_projects:
 
     projects = projects_raw.copy()
 
-    # Apply filters (AND behavior)
-    if creators_selected and "creator.name" in projects.columns:
+    # AND behavior for creators
+    if creators_selected and "creator_names" in projects.columns:
         def has_all_creators(val: str) -> bool:
             text = str(val) if pd.notna(val) else ""
             return all(c in text for c in creators_selected)
 
-        projects = projects[projects["creator.name"].apply(has_all_creators)]
+        projects = projects[projects["creator_names"].apply(has_all_creators)]
 
-    if "projects_year_filter" in st.session_state and "dateCreated" in projects.columns:
+    if "projects_year_filter" in st.session_state and "created_date" in projects.columns:
         year_choice = st.session_state.get("projects_year_filter")
         if year_choice and year_choice != "All years":
             year_val = int(year_choice)
-            years = pd.to_datetime(projects["dateCreated"], errors="coerce").dt.year
+            years = pd.to_datetime(projects["created_date"], errors="coerce").dt.year
             projects = projects[years == year_val]
 
-    if licenses_selected and "rights.name" in projects.columns:
-        projects = projects[projects["rights.name"].isin(licenses_selected)]
+    if licenses_selected and "license_name" in projects.columns:
+        projects = projects[projects["license_name"].isin(licenses_selected)]
 
-    if regions_selected and "storageRegion.prefLabel" in projects.columns:
-        projects = projects[projects["storageRegion.prefLabel"].isin(regions_selected)]
+    if regions_selected and "storage_region" in projects.columns:
+        projects = projects[projects["storage_region"].isin(regions_selected)]
 
-    if funders_selected and "funder.name" in projects.columns:
-        projects = projects[projects["funder.name"].isin(funders_selected)]
+    if funders_selected and "funder_names" in projects.columns:
+        projects = projects[projects["funder_names"].isin(funders_selected)]
 
-    subj_col_proj = next(
-        (c for c in projects.columns if "subject" in c.lower()),
-        None,
-    )
-    if subjects_selected and subj_col_proj in projects.columns:
-        projects = projects[projects[subj_col_proj].isin(subjects_selected)]
+    if subjects_selected and "subject_terms" in projects.columns:
+        projects = projects[projects["subject_terms"].isin(subjects_selected)]
 
-    if resource_types_selected and "resourceNature.displayLabel" in projects.columns:
-        projects = projects[
-            projects["resourceNature.displayLabel"].isin(resource_types_selected)
-        ]
+    if resource_types_selected and "resource_type" in projects.columns:
+        projects = projects[projects["resource_type"].isin(resource_types_selected)]
 
-    inst_col = next(
-        (
-            c
-            for c in projects.columns
-            if "institution" in c.lower() and "name" in c.lower()
-        ),
-        None,
-    )
-    if institutions_selected and inst_col in projects.columns:
-        projects = projects[projects[inst_col].isin(institutions_selected)]
+    if institutions_selected and "institution_name" in projects.columns:
+        projects = projects[projects["institution_name"].isin(institutions_selected)]
 
-    coll_col = next(
-        (c for c in projects.columns if "collection" in c.lower()),
-        None,
-    )
-    if collections_selected and coll_col in projects.columns:
-        projects = projects[projects[coll_col].isin(collections_selected)]
+    if collections_selected and "collection_name" in projects.columns:
+        projects = projects[projects["collection_name"].isin(collections_selected)]
 
     count_placeholder.markdown(f"**{len(projects):,} Total Projects**")
 
@@ -965,23 +940,26 @@ with tab_projects:
             st.info("No projects match the current filters.")
         else:
             df = projects.copy()
-            if "storageByteCount" in df.columns:
-                df["Total data stored on OSF (GB)"] = df["storageByteCount"] / 1e9
+            if "storage_bytes" in df.columns:
+                df["Total data stored on OSF (GB)"] = (
+                    pd.to_numeric(df["storage_bytes"], errors="coerce")
+                    .fillna(0) / 1e9
+                )
 
             display = df.rename(
                 columns={
-                    "title": "Title",
-                    "@id": "OSF Link",
-                    "dateCreated": "Created date",
-                    "dateModified": "Modified date",
-                    "sameAs": "DOI",
-                    "storageRegion.prefLabel": "Storage region",
-                    "creator.name": "Creator(s)",
-                    "usage.viewCount": "Views (last 30 days)",
-                    "resourceNature.displayLabel": "Resource type",
-                    "rights.name": "License",
-                    "hasOsfAddon.prefLabel": "Add-ons",
-                    "funder.name": "Funder name",
+                    "name_or_title": "Title",
+                    "osf_link": "OSF Link",
+                    "created_date": "Created date",
+                    "modified_date": "Modified date",
+                    "doi": "DOI",
+                    "storage_region": "Storage region",
+                    "creator_names": "Creator(s)",
+                    "view_count_30d": "Views (last 30 days)",
+                    "resource_type": "Resource type",
+                    "license_name": "License",
+                    "addon_names": "Add-ons",
+                    "funder_names": "Funder name",
                 }
             )
 
@@ -1002,7 +980,6 @@ with tab_projects:
             ]
             all_existing = [c for c in all_cols if c in display.columns]
 
-            # Show compact customize panel under Customize button
             if st.session_state["projects_show_customize"]:
                 with top_customize:
                     customize_columns_box(all_existing, "projects")
@@ -1086,10 +1063,14 @@ with tab_regs:
         with filter_col:
             st.markdown("#### Filter By")
 
-            if "creator.name" in regs_raw.columns:
+            if "creator_names" in regs_raw.columns:
                 with st.expander("Creator", expanded=False):
                     creator_options = sorted(
-                        regs_raw["creator.name"].dropna().unique().tolist()
+                        regs_raw["creator_names"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     creators_selected = st.multiselect(
                         "Creator name",
@@ -1098,10 +1079,10 @@ with tab_regs:
                         key="regs_creator_filter",
                     )
 
-            if "dateCreated" in regs_raw.columns:
+            if "created_date" in regs_raw.columns:
                 with st.expander("Date created", expanded=False):
                     years = (
-                        pd.to_datetime(regs_raw["dateCreated"], errors="coerce")
+                        pd.to_datetime(regs_raw["created_date"], errors="coerce")
                         .dt.year.dropna()
                         .astype(int)
                         .unique()
@@ -1116,10 +1097,14 @@ with tab_regs:
                         key="regs_year_filter",
                     )
 
-            if "rights.name" in regs_raw.columns:
+            if "license_name" in regs_raw.columns:
                 with st.expander("License", expanded=False):
                     license_options = sorted(
-                        regs_raw["rights.name"].dropna().unique().tolist()
+                        regs_raw["license_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     licenses_selected = st.multiselect(
                         "License",
@@ -1128,11 +1113,12 @@ with tab_regs:
                         key="regs_license_filter",
                     )
 
-            if "storageRegion.prefLabel" in regs_raw.columns:
+            if "storage_region" in regs_raw.columns:
                 with st.expander("Storage region", expanded=False):
                     region_options = sorted(
-                        regs_raw["storageRegion.prefLabel"]
+                        regs_raw["storage_region"]
                         .dropna()
+                        .astype(str)
                         .unique()
                         .tolist()
                     )
@@ -1143,10 +1129,14 @@ with tab_regs:
                         key="regs_region_filter",
                     )
 
-            if "conformsTo.title" in regs_raw.columns:
+            if "registration_schema_title" in regs_raw.columns:
                 with st.expander("Registration schema", expanded=False):
                     schema_options = sorted(
-                        regs_raw["conformsTo.title"].dropna().unique().tolist()
+                        regs_raw["registration_schema_title"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     schemas_selected = st.multiselect(
                         "Schema",
@@ -1155,18 +1145,14 @@ with tab_regs:
                         key="regs_schema_filter",
                     )
 
-            inst_col_raw = next(
-                (
-                    c
-                    for c in regs_raw.columns
-                    if "institution" in c.lower() and "name" in c.lower()
-                ),
-                None,
-            )
-            if inst_col_raw:
+            if "institution_name" in regs_raw.columns:
                 with st.expander("Institution", expanded=False):
                     inst_options = sorted(
-                        regs_raw[inst_col_raw].dropna().unique().tolist()
+                        regs_raw["institution_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     institutions_selected = st.multiselect(
                         "Institution",
@@ -1177,39 +1163,31 @@ with tab_regs:
 
     regs = regs_raw.copy()
 
-    if creators_selected and "creator.name" in regs.columns:
+    if creators_selected and "creator_names" in regs.columns:
         def has_all_creators(val: str) -> bool:
             text = str(val) if pd.notna(val) else ""
             return all(c in text for c in creators_selected)
 
-        regs = regs[regs["creator.name"].apply(has_all_creators)]
+        regs = regs[regs["creator_names"].apply(has_all_creators)]
 
-    if "regs_year_filter" in st.session_state and "dateCreated" in regs.columns:
+    if "regs_year_filter" in st.session_state and "created_date" in regs.columns:
         year_choice = st.session_state.get("regs_year_filter")
         if year_choice and year_choice != "All years":
             year_val = int(year_choice)
-            years = pd.to_datetime(regs["dateCreated"], errors="coerce").dt.year
+            years = pd.to_datetime(regs["created_date"], errors="coerce").dt.year
             regs = regs[years == year_val]
 
-    if licenses_selected and "rights.name" in regs.columns:
-        regs = regs[regs["rights.name"].isin(licenses_selected)]
+    if licenses_selected and "license_name" in regs.columns:
+        regs = regs[regs["license_name"].isin(licenses_selected)]
 
-    if regions_selected and "storageRegion.prefLabel" in regs.columns:
-        regs = regs[regs["storageRegion.prefLabel"].isin(regions_selected)]
+    if regions_selected and "storage_region" in regs.columns:
+        regs = regs[regs["storage_region"].isin(regions_selected)]
 
-    if schemas_selected and "conformsTo.title" in regs.columns:
-        regs = regs[regs["conformsTo.title"].isin(schemas_selected)]
+    if schemas_selected and "registration_schema_title" in regs.columns:
+        regs = regs[regs["registration_schema_title"].isin(schemas_selected)]
 
-    inst_col = next(
-        (
-            c
-            for c in regs.columns
-            if "institution" in c.lower() and "name" in c.lower()
-        ),
-        None,
-    )
-    if institutions_selected and inst_col in regs.columns:
-        regs = regs[regs[inst_col].isin(institutions_selected)]
+    if institutions_selected and "institution_name" in regs.columns:
+        regs = regs[regs["institution_name"].isin(institutions_selected)]
 
     regs_count_placeholder.markdown(f"**{len(regs):,} Total Registrations**")
 
@@ -1218,23 +1196,26 @@ with tab_regs:
             st.info("No registrations match the current filters.")
         else:
             df = regs.copy()
-            if "storageByteCount" in df.columns:
-                df["Total data stored on OSF (GB)"] = df["storageByteCount"] / 1e9
+            if "storage_bytes" in df.columns:
+                df["Total data stored on OSF (GB)"] = (
+                    pd.to_numeric(df["storage_bytes"], errors="coerce")
+                    .fillna(0) / 1e9
+                )
 
             display = df.rename(
                 columns={
-                    "title": "Title",
-                    "@id": "OSF Link",
-                    "dateCreated": "Created date",
-                    "dateModified": "Modified date",
-                    "sameAs": "DOI",
-                    "storageRegion.prefLabel": "Storage region",
-                    "creator.name": "Creator(s)",
-                    "usage.viewCount": "Views (last 30 days)",
-                    "resourceNature.displayLabel": "Resource type",
-                    "rights.name": "License",
-                    "funder.name": "Funder name",
-                    "conformsTo.title": "Registration schema",
+                    "name_or_title": "Title",
+                    "osf_link": "OSF Link",
+                    "created_date": "Created date",
+                    "modified_date": "Modified date",
+                    "doi": "DOI",
+                    "storage_region": "Storage region",
+                    "creator_names": "Creator(s)",
+                    "view_count_30d": "Views (last 30 days)",
+                    "resource_type": "Resource type",
+                    "license_name": "License",
+                    "funder_names": "Funder name",
+                    "registration_schema_title": "Registration schema",
                 }
             )
 
@@ -1336,10 +1317,14 @@ with tab_preprints:
         with filter_col:
             st.markdown("#### Filter By")
 
-            if "creator.name" in preprints_raw.columns:
+            if "creator_names" in preprints_raw.columns:
                 with st.expander("Creator", expanded=False):
                     creator_options = sorted(
-                        preprints_raw["creator.name"].dropna().unique().tolist()
+                        preprints_raw["creator_names"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     creators_selected = st.multiselect(
                         "Creator name",
@@ -1348,10 +1333,10 @@ with tab_preprints:
                         key="preprints_creator_filter",
                     )
 
-            if "dateCreated" in preprints_raw.columns:
+            if "created_date" in preprints_raw.columns:
                 with st.expander("Date created", expanded=False):
                     years = (
-                        pd.to_datetime(preprints_raw["dateCreated"], errors="coerce")
+                        pd.to_datetime(preprints_raw["created_date"], errors="coerce")
                         .dt.year.dropna()
                         .astype(int)
                         .unique()
@@ -1366,14 +1351,14 @@ with tab_preprints:
                         key="preprints_year_filter",
                     )
 
-            subj_col_raw = next(
-                (c for c in preprints_raw.columns if "subject" in c.lower()),
-                None,
-            )
-            if subj_col_raw:
+            if "subject_terms" in preprints_raw.columns:
                 with st.expander("Subject", expanded=False):
                     subj_options = sorted(
-                        preprints_raw[subj_col_raw].dropna().unique().tolist()
+                        preprints_raw["subject_terms"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     subjects_selected = st.multiselect(
                         "Subject",
@@ -1382,10 +1367,14 @@ with tab_preprints:
                         key="preprints_subject_filter",
                     )
 
-            if "rights.name" in preprints_raw.columns:
+            if "license_name" in preprints_raw.columns:
                 with st.expander("License", expanded=True):
                     license_options = sorted(
-                        preprints_raw["rights.name"].dropna().unique().tolist()
+                        preprints_raw["license_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
                     )
                     licenses_selected = st.multiselect(
                         "License",
@@ -1396,29 +1385,25 @@ with tab_preprints:
 
     preprints = preprints_raw.copy()
 
-    if creators_selected and "creator.name" in preprints.columns:
+    if creators_selected and "creator_names" in preprints.columns:
         def has_all_creators(val: str) -> bool:
             text = str(val) if pd.notna(val) else ""
             return all(c in text for c in creators_selected)
 
-        preprints = preprints[preprints["creator.name"].apply(has_all_creators)]
+        preprints = preprints[preprints["creator_names"].apply(has_all_creators)]
 
-    if "preprints_year_filter" in st.session_state and "dateCreated" in preprints.columns:
+    if "preprints_year_filter" in st.session_state and "created_date" in preprints.columns:
         year_choice = st.session_state.get("preprints_year_filter")
         if year_choice and year_choice != "All years":
             year_val = int(year_choice)
-            years = pd.to_datetime(preprints["dateCreated"], errors="coerce").dt.year
+            years = pd.to_datetime(preprints["created_date"], errors="coerce").dt.year
             preprints = preprints[years == year_val]
 
-    if licenses_selected and "rights.name" in preprints.columns:
-        preprints = preprints[preprints["rights.name"].isin(licenses_selected)]
+    if licenses_selected and "license_name" in preprints.columns:
+        preprints = preprints[preprints["license_name"].isin(licenses_selected)]
 
-    subj_col = next(
-        (c for c in preprints.columns if "subject" in c.lower()),
-        None,
-    )
-    if subjects_selected and subj_col in preprints.columns:
-        preprints = preprints[preprints[subj_col].isin(subjects_selected)]
+    if subjects_selected and "subject_terms" in preprints.columns:
+        preprints = preprints[preprints["subject_terms"].isin(subjects_selected)]
 
     preprints_count_placeholder.markdown(f"**{len(preprints):,} Total Preprints**")
 
@@ -1429,15 +1414,15 @@ with tab_preprints:
             df = preprints.copy()
             display = df.rename(
                 columns={
-                    "title": "Title",
-                    "@id": "OSF Link",
-                    "dateCreated": "Created date",
-                    "dateModified": "Modified date",
-                    "sameAs": "DOI",
-                    "rights.name": "License",
-                    "creator.name": "Contributor name",
-                    "usage.viewCount": "Views (last 30 days)",
-                    "usage.downloadCount": "Downloads (last 30 days)",
+                    "name_or_title": "Title",
+                    "osf_link": "OSF Link",
+                    "created_date": "Created date",
+                    "modified_date": "Modified date",
+                    "doi": "DOI",
+                    "license_name": "License",
+                    "creator_names": "Contributor name",
+                    "view_count_30d": "Views (last 30 days)",
+                    "download_count_30d": "Downloads (last 30 days)",
                 }
             )
 
@@ -1472,7 +1457,6 @@ with tab_preprints:
                     use_container_width=True,
                 )
 
-            # Only show row count, no average views metric
             st.metric("Preprints (rows)", fmt(len(display)))
 
             st.markdown("#### Results")
