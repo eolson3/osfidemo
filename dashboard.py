@@ -24,23 +24,22 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
     """
     Load unified CSV.
 
-    Expects a column whose name *normalizes* to 'row_type' with values:
-      - branding
+    Expects a column that normalizes to 'row_type' with values like:
       - summary
       - user
       - project
       - registration
       - preprint
+    Branding can be in a separate 'branding' row OR folded into the summary row.
     """
-    # Read as strings, don't drop NA yet
+    # Read as strings
     df = pd.read_csv(path, dtype=str)
 
-    # Normalize column names (strip spaces, lowercase)
+    # Normalize column names (strip spaces)
     original_cols = list(df.columns)
-    normalized_cols = [c.strip() for c in original_cols]
-    df.columns = normalized_cols
+    df.columns = [c.strip() for c in df.columns]
 
-    # Try to find a column that *means* row_type
+    # Find the row_type-like column
     row_type_col = None
     for col in df.columns:
         if col.strip().lower() == "row_type":
@@ -48,20 +47,20 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
             break
 
     if row_type_col is None:
-        # Helpful debug info so you can see what headers it sees
         st.error(
             "CSV must include a 'row_type' column "
-            "(branding/summary/user/project/registration/preprint).\n\n"
+            "(values like summary/user/project/registration/preprint, and optionally branding).\n\n"
             f"Columns found: {original_cols}"
         )
         st.stop()
 
-    # If the exact name is not 'row_type', rename it for internal use
+    # Ensure we have a 'row_type' column internally
     if row_type_col != "row_type":
         df["row_type"] = df[row_type_col]
 
     df = df.fillna("")
 
+    # Separate subsets
     branding_df = df[df["row_type"] == "branding"]
     summary_df = df[df["row_type"] == "summary"]
     users = df[df["row_type"] == "user"].copy()
@@ -69,12 +68,29 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
     registrations = df[df["row_type"] == "registration"].copy()
     preprints = df[df["row_type"] == "preprint"].copy()
 
-    branding_row = branding_df.iloc[0] if not branding_df.empty else pd.Series(dtype=object)
-    summary_row = summary_df.iloc[0] if not summary_df.empty else pd.Series(dtype=object)
+    # ---- branding_row logic ----
+    # 1) If there's an explicit branding row, use its first row
+    # 2) Else, if there's a summary row, use THAT as branding
+    # 3) Else, fall back to empty series
+    if not branding_df.empty:
+        branding_row = branding_df.iloc[0]
+    elif not summary_df.empty:
+        branding_row = summary_df.iloc[0]
+    else:
+        branding_row = pd.Series(dtype=object)
+
+    # ---- summary_row logic ----
+    # 1) If there's a summary row, use its first row
+    # 2) Else, if there's a branding row, use that as summary
+    # 3) Else, fall back to empty series
+    if not summary_df.empty:
+        summary_row = summary_df.iloc[0]
+    elif not branding_df.empty:
+        summary_row = branding_df.iloc[0]
+    else:
+        summary_row = pd.Series(dtype=object)
 
     return branding_row, summary_row, users, projects, registrations, preprints
-
-
 
 def _safe_int(series: pd.Series, key: str, default: int = 0) -> int:
     raw = series.get(key, "")
@@ -221,6 +237,7 @@ def render_header(branding_row: pd.Series, summary_row: pd.Series) -> None:
         """,
         unsafe_allow_html=True,
     )
+
 
 # -------------------------------------------------------------------
 # SUMMARY TAB
