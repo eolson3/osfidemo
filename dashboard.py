@@ -465,7 +465,12 @@ with tab_users:
         ]
 
     with ctop2:
-        st.button("Customize", on_click=toggle_users_customize, use_container_width=True)
+        st.button(
+            "Customize",
+            key="users_customize_btn",
+            on_click=toggle_users_customize,
+            use_container_width=True,
+        )
 
     # Filters row
     st.markdown("##### Filters")
@@ -572,6 +577,7 @@ with tab_users:
         with ctop3:
             st.download_button(
                 "Download CSV",
+                key="users_download_btn",
                 data=csv_bytes,
                 file_name="users_filtered.csv",
                 mime="text/csv",
@@ -606,10 +612,16 @@ with tab_projects:
     count_placeholder = top_left_col.empty()
 
     with top_filters:
-        st.button("Filters", on_click=toggle_projects_filters, use_container_width=True)
+        st.button(
+            "Filters",
+            key="projects_filters_btn",
+            on_click=toggle_projects_filters,
+            use_container_width=True,
+        )
     with top_customize:
         st.button(
             "Customize",
+            key="projects_customize_btn",
             on_click=toggle_projects_customize,
             use_container_width=True,
         )
@@ -793,9 +805,12 @@ with tab_projects:
 
         projects = projects[projects["creator.name"].apply(has_all_creators)]
 
-    if year_selected is not None and "dateCreated" in projects.columns:
-        years = pd.to_datetime(projects["dateCreated"], errors="coerce").dt.year
-        projects = projects[years == year_selected]
+    if "dateCreated" in projects.columns and "projects_year_filter" in st.session_state:
+        year_selected = st.session_state.get("projects_year_filter")
+        if year_selected and year_selected != "All years":
+            year_val = int(year_selected)
+            years = pd.to_datetime(projects["dateCreated"], errors="coerce").dt.year
+            projects = projects[years == year_val]
 
     if licenses_selected and "rights.name" in projects.columns:
         projects = projects[projects["rights.name"].isin(licenses_selected)]
@@ -806,6 +821,10 @@ with tab_projects:
     if funders_selected and "funder.name" in projects.columns:
         projects = projects[projects["funder.name"].isin(funders_selected)]
 
+    subj_col = next(
+        (c for c in projects.columns if "subject" in c.lower()),
+        None,
+    )
     if subjects_selected and subj_col in projects.columns:
         projects = projects[projects[subj_col].isin(subjects_selected)]
 
@@ -814,9 +833,21 @@ with tab_projects:
             projects["resourceNature.displayLabel"].isin(resource_types_selected)
         ]
 
+    inst_col = next(
+        (
+            c
+            for c in projects.columns
+            if "institution" in c.lower() and "name" in c.lower()
+        ),
+        None,
+    )
     if institutions_selected and inst_col in projects.columns:
         projects = projects[projects[inst_col].isin(institutions_selected)]
 
+    coll_col = next(
+        (c for c in projects.columns if "collection" in c.lower()),
+        None,
+    )
     if collections_selected and coll_col in projects.columns:
         projects = projects[projects[coll_col].isin(collections_selected)]
 
@@ -876,11 +907,11 @@ with tab_projects:
 
             display = display[selected_cols]
 
-            # Download button
             csv_bytes = display.to_csv(index=False).encode("utf-8")
             with top_download:
                 st.download_button(
                     "Download CSV",
+                    key="projects_download_btn",
                     data=csv_bytes,
                     file_name="projects_filtered.csv",
                     mime="text/csv",
@@ -915,10 +946,16 @@ with tab_regs:
     regs_count_placeholder = top_left_col.empty()
 
     with top_filters:
-        st.button("Filters", on_click=toggle_regs_filters, use_container_width=True)
+        st.button(
+            "Filters",
+            key="regs_filters_btn",
+            on_click=toggle_regs_filters,
+            use_container_width=True,
+        )
     with top_customize:
         st.button(
             "Customize",
+            key="regs_customize_btn",
             on_click=toggle_regs_customize,
             use_container_width=True,
         )
@@ -1013,7 +1050,7 @@ with tab_regs:
                         key="regs_schema_filter",
                     )
 
-            inst_col = next(
+            inst_col_raw = next(
                 (
                     c
                     for c in regs_raw.columns
@@ -1021,10 +1058,10 @@ with tab_regs:
                 ),
                 None,
             )
-            if inst_col:
+            if inst_col_raw:
                 with st.expander("Institution", expanded=False):
                     inst_options = sorted(
-                        regs_raw[inst_col].dropna().unique().tolist()
+                        regs_raw[inst_col_raw].dropna().unique().tolist()
                     )
                     institutions_selected = st.multiselect(
                         "Institution",
@@ -1042,9 +1079,12 @@ with tab_regs:
 
         regs = regs[regs["creator.name"].apply(has_all_creators)]
 
-    if year_selected is not None and "dateCreated" in regs.columns:
-        years = pd.to_datetime(regs["dateCreated"], errors="coerce").dt.year
-        regs = regs[years == year_selected]
+    if "dateCreated" in regs.columns and "regs_year_filter" in st.session_state:
+        year_selected = st.session_state.get("regs_year_filter")
+        if year_selected and year_selected != "All years":
+            year_val = int(year_selected)
+            years = pd.to_datetime(regs["dateCreated"], errors="coerce").dt.year
+            regs = regs[years == year_val]
 
     if licenses_selected and "rights.name" in regs.columns:
         regs = regs[regs["rights.name"].isin(licenses_selected)]
@@ -1055,6 +1095,14 @@ with tab_regs:
     if schemas_selected and "conformsTo.title" in regs.columns:
         regs = regs[regs["conformsTo.title"].isin(schemas_selected)]
 
+    inst_col = next(
+        (
+            c
+            for c in regs.columns
+            if "institution" in c.lower() and "name" in c.lower()
+        ),
+        None,
+    )
     if institutions_selected and inst_col in regs.columns:
         regs = regs[regs[inst_col].isin(institutions_selected)]
 
@@ -1118,6 +1166,7 @@ with tab_regs:
             with top_download:
                 st.download_button(
                     "Download CSV",
+                    key="regs_download_btn",
                     data=csv_bytes,
                     file_name="registrations_filtered.csv",
                     mime="text/csv",
@@ -1152,10 +1201,16 @@ with tab_preprints:
     preprints_count_placeholder = top_left_col.empty()
 
     with top_filters:
-        st.button("Filters", on_click=toggle_preprints_filters, use_container_width=True)
+        st.button(
+            "Filters",
+            key="preprints_filters_btn",
+            on_click=toggle_preprints_filters,
+            use_container_width=True,
+        )
     with top_customize:
         st.button(
             "Customize",
+            key="preprints_customize_btn",
             on_click=toggle_preprints_customize,
             use_container_width=True,
         )
@@ -1209,14 +1264,14 @@ with tab_preprints:
                     if choice != "All years":
                         year_selected = int(choice)
 
-            subj_col = next(
+            subj_col_raw = next(
                 (c for c in preprints_raw.columns if "subject" in c.lower()),
                 None,
             )
-            if subj_col:
+            if subj_col_raw:
                 with st.expander("Subject", expanded=False):
                     subj_options = sorted(
-                        preprints_raw[subj_col].dropna().unique().tolist()
+                        preprints_raw[subj_col_raw].dropna().unique().tolist()
                     )
                     subjects_selected = st.multiselect(
                         "Subject",
@@ -1246,13 +1301,20 @@ with tab_preprints:
 
         preprints = preprints[preprints["creator.name"].apply(has_all_creators)]
 
-    if year_selected is not None and "dateCreated" in preprints.columns:
-        years = pd.to_datetime(preprints["dateCreated"], errors="coerce").dt.year
-        preprints = preprints[years == year_selected]
+    if "dateCreated" in preprints.columns and "preprints_year_filter" in st.session_state:
+        year_selected = st.session_state.get("preprints_year_filter")
+        if year_selected and year_selected != "All years":
+            year_val = int(year_selected)
+            years = pd.to_datetime(preprints["dateCreated"], errors="coerce").dt.year
+            preprints = preprints[years == year_val]
 
     if licenses_selected and "rights.name" in preprints.columns:
         preprints = preprints[preprints["rights.name"].isin(licenses_selected)]
 
+    subj_col = next(
+        (c for c in preprints.columns if "subject" in c.lower()),
+        None,
+    )
     if subjects_selected and subj_col in preprints.columns:
         preprints = preprints[preprints[subj_col].isin(subjects_selected)]
 
@@ -1306,6 +1368,7 @@ with tab_preprints:
             with top_download:
                 st.download_button(
                     "Download CSV",
+                    key="preprints_download_btn",
                     data=csv_bytes,
                     file_name="preprints_filtered.csv",
                     mime="text/csv",
