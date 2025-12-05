@@ -24,7 +24,7 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
     """
     Load unified CSV.
 
-    Assumptions based on your header:
+    Assumptions:
       - First column is row_type
       - row_type values: summary, user, project, registration, preprint
       - Branding + summary metrics live on the summary row.
@@ -81,9 +81,7 @@ def _safe_float(value, default: float = 0.0) -> float:
 
 def paginate_df(df: pd.DataFrame, key_prefix: str, page_size: int = 10):
     """
-    Pure pagination logic:
-      - returns page slice + total + max_page + current_page
-      - no Streamlit UI here (UI is rendered *below* the table)
+    Pure pagination logic.
     """
     total = len(df)
     if total == 0:
@@ -206,7 +204,6 @@ def render_summary_tab(summary_row: pd.Series,
                        preprints: pd.DataFrame) -> None:
     st.markdown("### Summary")
 
-    # Metrics
     total_users = len(users)
     total_monthly_logged_in_users = _safe_int(summary_row.get("summary_monthly_logged_in_users", "0"))
     total_monthly_active_users = _safe_int(summary_row.get("summary_monthly_active_users", "0"))
@@ -266,7 +263,7 @@ def render_summary_tab(summary_row: pd.Series,
 
     st.write("---")
 
-    # Donut helper using Vega-Lite
+    # Donut helper
     def donut_from_counts(title: str, counts: Dict[str, int]) -> None:
         data = pd.DataFrame(
             {"category": list(counts.keys()), "value": list(counts.values())}
@@ -326,7 +323,7 @@ def render_summary_tab(summary_row: pd.Series,
         "Preprints": total_preprints,
     }
 
-    # Top 10 licenses from all_content
+    # Top 10 licenses
     license_counts: Dict[str, int] = {}
     if "license" in all_content.columns:
         series = (
@@ -390,8 +387,10 @@ def render_table_tab(
     st.markdown(f"### {label}")
     st.markdown(f"**{len(df):,} {count_label}**")
 
-    # Action row: Filters / Customize / Download CSV (buttons, always visible)
-    action_col1, action_col2, action_col3 = st.columns([1, 1, 1])
+    # ------------------------------------------------------------------
+    # ACTION ROW: right-aligned buttons (Filters / Customize / Download)
+    # ------------------------------------------------------------------
+    spacer, action_col1, action_col2, action_col3 = st.columns([6, 1, 1, 1])
 
     filters_state_key = f"{key_prefix}_filters_open"
     customize_state_key = f"{key_prefix}_customize_open"
@@ -474,7 +473,7 @@ def render_table_tab(
 
     work_df = work_df[visible_cols]
 
-    # Download CSV button (current filtered + visible columns)
+    # Download CSV (filtered + visible)
     with download_container:
         if not work_df.empty:
             download_link_from_df(
@@ -491,7 +490,6 @@ def render_table_tab(
     # --- Paginate then display ---
     page_df, total_filtered, max_page, current_page = paginate_df(work_df, key_prefix=key_prefix, page_size=10)
 
-    # Show filtered results count above pager
     st.markdown(
         f"<div style='font-size:0.9rem;color:#4A5568;margin-bottom:0.2rem;'>{total_filtered} results</div>",
         unsafe_allow_html=True,
@@ -506,7 +504,7 @@ def render_table_tab(
         column_config=col_cfg,
     )
 
-    # Pagination controls BELOW the table
+    # Pagination BELOW the table
     st.markdown("<div style='margin-top:0.3rem;'></div>", unsafe_allow_html=True)
 
     page_key = f"{key_prefix}_page"
@@ -523,7 +521,6 @@ def render_table_tab(
             st.session_state[page_key] = current_page + 1
 
     with pcol3:
-        # Show page indicator centered under the arrows
         st.markdown(
             f"<div style='text-align:center;font-size:0.8rem;color:#4A5568;'>Page {current_page} of {max_page}</div>",
             unsafe_allow_html=True,
