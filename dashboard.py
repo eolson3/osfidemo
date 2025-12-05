@@ -32,12 +32,19 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
       - preprint
     Branding can be in a separate 'branding' row OR folded into the summary row.
     """
-    # Read as strings
-    df = pd.read_csv(path, dtype=str)
+    # Read as strings; let pandas sniff the delimiter just in case
+    df = pd.read_csv(path, dtype=str, sep=None, engine="python")
 
-    # Normalize column names (strip spaces)
+    # Keep originals for debugging
     original_cols = list(df.columns)
-    df.columns = [c.strip() for c in df.columns]
+
+    # Normalize column names: strip, remove BOM, lower-case
+    normalized_cols = []
+    for c in df.columns:
+        # remove BOM if present
+        c_clean = c.replace("\ufeff", "").strip()
+        normalized_cols.append(c_clean)
+    df.columns = normalized_cols
 
     # Find the row_type-like column
     row_type_col = None
@@ -50,7 +57,8 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
         st.error(
             "CSV must include a 'row_type' column "
             "(values like summary/user/project/registration/preprint, and optionally branding).\n\n"
-            f"Columns found: {original_cols}"
+            f"Raw columns seen: {original_cols}\n"
+            f"Normalized columns: {df.columns.tolist()}"
         )
         st.stop()
 
@@ -91,6 +99,7 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
         summary_row = pd.Series(dtype=object)
 
     return branding_row, summary_row, users, projects, registrations, preprints
+
 
 def _safe_int(series: pd.Series, key: str, default: int = 0) -> int:
     raw = series.get(key, "")
