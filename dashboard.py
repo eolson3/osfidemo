@@ -29,7 +29,6 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
       - row_type values: summary, user, project, registration, preprint
       - Branding + summary metrics live on the summary row.
     """
-    # Read as strings, let pandas sniff delimiter (comma, tab, etc.)
     df = pd.read_csv(path, dtype=str, sep=None, engine="python")
 
     # Normalize column names (strip whitespace, remove BOM)
@@ -80,11 +79,15 @@ def _safe_float(value, default: float = 0.0) -> float:
         return default
 
 
-def paginate_df(df: pd.DataFrame, key_prefix: str, page_size: int = 10) -> pd.DataFrame:
-    """Return a slice of df for the current page and render simple pager buttons."""
+def paginate_df(df: pd.DataFrame, key_prefix: str, page_size: int = 10):
+    """
+    Pure pagination logic:
+      - returns page slice + total + max_page + current_page
+      - no Streamlit UI here (UI is rendered *below* the table)
+    """
     total = len(df)
     if total == 0:
-        return df
+        return df, 0, 1, 1
 
     max_page = max(1, math.ceil(total / page_size))
     page_key = f"{key_prefix}_page"
@@ -92,34 +95,16 @@ def paginate_df(df: pd.DataFrame, key_prefix: str, page_size: int = 10) -> pd.Da
     if page_key not in st.session_state:
         st.session_state[page_key] = 1
 
-    col_left, col_right = st.columns([3, 2])
-    with col_left:
-        st.markdown(
-            f"<div style='font-size:0.9rem;color:#4A5568;margin-bottom:0.2rem;'>{total} results</div>",
-            unsafe_allow_html=True,
-        )
-    with col_right:
-        current = st.session_state[page_key]
-        st.markdown("<div style='text-align:right;'>", unsafe_allow_html=True)
-        c1, c2, c3 = st.columns(3)
-        with c1:
-            if st.button("«", key=f"{page_key}_first") and total > 0:
-                st.session_state[page_key] = 1
-        with c2:
-            if st.button("‹", key=f"{page_key}_prev") and current > 1:
-                st.session_state[page_key] = current - 1
-        with c3:
-            if st.button("›", key=f"{page_key}_next") and current < max_page:
-                st.session_state[page_key] = current + 1
-        st.markdown(
-            f"<span style='font-size:0.8rem;color:#4A5568;'>Page {st.session_state[page_key]} of {max_page}</span>",
-            unsafe_allow_html=True,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
+    current = st.session_state[page_key]
+    if current < 1:
+        current = 1
+    if current > max_page:
+        current = max_page
+    st.session_state[page_key] = current
 
-    start = (st.session_state[page_key] - 1) * page_size
+    start = (current - 1) * page_size
     end = start + page_size
-    return df.iloc[start:end]
+    return df.iloc[start:end], total, max_page, current
 
 
 def download_link_from_df(df: pd.DataFrame, filename: str, label: str, key: str) -> None:
@@ -221,7 +206,7 @@ def render_summary_tab(summary_row: pd.Series,
                        preprints: pd.DataFrame) -> None:
     st.markdown("### Summary")
 
-    # Metrics: combo of summary row + derived from detail rows
+    # Metrics
     total_users = len(users)
     total_monthly_logged_in_users = _safe_int(summary_row.get("summary_monthly_logged_in_users", "0"))
     total_monthly_active_users = _safe_int(summary_row.get("summary_monthly_active_users", "0"))
@@ -234,13 +219,11 @@ def render_summary_tab(summary_row: pd.Series,
     total_public_private_projects = projects_public + projects_private
     total_public_embargoed_regs = regs_public + regs_embargoed
 
-    # Public file count from users
     if "public_file_count" in users.columns:
         total_public_files = users["public_file_count"].apply(_safe_int).sum()
     else:
         total_public_files = 0
 
-    # Total storage (GB) from content rows
     all_content = pd.concat(
         [projects.assign(_src="project"),
          registrations.assign(_src="registration"),
@@ -321,17 +304,8 @@ def render_summary_tab(summary_row: pd.Series,
     if dept_col:
         users_by_dept = users[dept_col].replace("", "Unknown").value_counts().to_dict()
 
-    # Public vs Private projects
-    proj_counts = {
-        "Public": projects_public,
-        "Private": projects_private,
-    }
-
-    # Public vs Embargoed registrations
-    reg_counts = {
-        "Public": regs_public,
-        "Embargoed": regs_embargoed,
-    }
+    proj_counts = {"Public": projects_public, "Private": projects_private}
+    reg_counts = {"Public": regs_public, "Embargoed": regs_embargoed}
 
     c1, c2, c3 = st.columns(3)
     with c1:
@@ -365,7 +339,7 @@ def render_summary_tab(summary_row: pd.Series,
         )
         license_counts = series.to_dict()
 
-    # Top 10 add-ons from all_content (splitting add_ons by ';' or ',')
+    # Top 10 add-ons
     addon_counts: Dict[str, int] = {}
     if "add_ons" in all_content.columns:
         all_addons: List[str] = []
@@ -386,7 +360,7 @@ def render_summary_tab(summary_row: pd.Series,
 
     st.write("---")
 
-    # Storage regions from all_content
+    # Storage regions
     region_counts: Dict[str, int] = {}
     if "storage_region" in all_content.columns:
         region_counts = (
@@ -414,23 +388,35 @@ def render_table_tab(
     count_label: str,
 ) -> None:
     st.markdown(f"### {label}")
-
     st.markdown(f"**{len(df):,} {count_label}**")
 
-    # Top actions row: Filters / Customize / Download
+    # Action row: Filters / Customize / Download CSV (buttons, always visible)
+    action_col1, action_col2, action_col3 = st.columns([1, 1, 1])
+
+    filters_state_key = f"{key_prefix}_filters_open"
+    customize_state_key = f"{key_prefix}_customize_open"
+    if filters_state_key not in st.session_state:
+        st.session_state[filters_state_key] = False
+    if customize_state_key not in st.session_state:
+        st.session_state[customize_state_key] = False
+
+    with action_col1:
+        if st.button("Filters", key=f"{key_prefix}_filters_btn"):
+            st.session_state[filters_state_key] = not st.session_state[filters_state_key]
+
+    with action_col2:
+        if st.button("Customize", key=f"{key_prefix}_customize_btn"):
+            st.session_state[customize_state_key] = not st.session_state[customize_state_key]
+
+    # We'll fill the Download CSV button after we have the filtered view
+    download_container = action_col3
+
     st.markdown("<div style='margin-top:0.25rem;margin-bottom:0.25rem;'></div>", unsafe_allow_html=True)
-    bcol1, bcol2, bcol3 = st.columns([1, 1, 1])
-    with bcol1:
-        show_filters = st.checkbox("Filters", key=f"{key_prefix}_filters_open", value=False)
-    with bcol2:
-        show_customize = st.checkbox("Customize", key=f"{key_prefix}_customize_open", value=False)
-    with bcol3:
-        do_download = st.checkbox("Download CSV", key=f"{key_prefix}_download_open", value=False)
 
     work_df = df.copy()
 
     # --- Filters ---
-    if show_filters and filter_config:
+    if st.session_state[filters_state_key] and filter_config:
         st.markdown("#### Filters")
         for col_name, cfg in filter_config.items():
             if col_name not in work_df.columns:
@@ -451,7 +437,6 @@ def render_table_tab(
                     key=f"{key_prefix}_f_{col_name}",
                 )
                 if selected:
-                    # AND behavior: require each selected value to appear in the cell
                     mask = pd.Series(True, index=work_df.index)
                     for val in selected:
                         mask &= work_df[col_name].astype(str).str.contains(str(val), na=False)
@@ -471,7 +456,7 @@ def render_table_tab(
         visible = [c for c in default_columns if c in work_df.columns] or list(work_df.columns)
         st.session_state[visible_key] = visible
 
-    if show_customize:
+    if st.session_state[customize_state_key]:
         st.markdown("#### Customize columns")
         all_cols = list(work_df.columns)
         selected = st.multiselect(
@@ -489,21 +474,29 @@ def render_table_tab(
 
     work_df = work_df[visible_cols]
 
-    # --- Download CSV (filtered, visible columns) ---
-    if do_download and not work_df.empty:
-        download_link_from_df(
-            work_df,
-            filename=f"{label.lower()}_filtered.csv",
-            label="Download current view as CSV",
-            key=f"{key_prefix}_download_btn",
-        )
+    # Download CSV button (current filtered + visible columns)
+    with download_container:
+        if not work_df.empty:
+            download_link_from_df(
+                work_df,
+                filename=f"{label.lower()}_filtered.csv",
+                label="Download CSV",
+                key=f"{key_prefix}_download_btn",
+            )
 
-    # --- Paginate + display ---
     if work_df.empty:
         st.info("No rows match the current filters.")
         return
 
-    page_df = paginate_df(work_df, key_prefix=key_prefix, page_size=10)
+    # --- Paginate then display ---
+    page_df, total_filtered, max_page, current_page = paginate_df(work_df, key_prefix=key_prefix, page_size=10)
+
+    # Show filtered results count above pager
+    st.markdown(
+        f"<div style='font-size:0.9rem;color:#4A5568;margin-bottom:0.2rem;'>{total_filtered} results</div>",
+        unsafe_allow_html=True,
+    )
+
     col_cfg = build_link_column_config(page_df)
 
     st.dataframe(
@@ -512,6 +505,29 @@ def render_table_tab(
         width="stretch",
         column_config=col_cfg,
     )
+
+    # Pagination controls BELOW the table
+    st.markdown("<div style='margin-top:0.3rem;'></div>", unsafe_allow_html=True)
+
+    page_key = f"{key_prefix}_page"
+    pcol1, pcol2, pcol3, pcol4, pcol5 = st.columns([3, 1, 1, 1, 3])
+
+    with pcol2:
+        if st.button("«", key=f"{page_key}_first") and total_filtered > 0:
+            st.session_state[page_key] = 1
+    with pcol3:
+        if st.button("‹", key=f"{page_key}_prev") and current_page > 1:
+            st.session_state[page_key] = current_page - 1
+    with pcol4:
+        if st.button("›", key=f"{page_key}_next") and current_page < max_page:
+            st.session_state[page_key] = current_page + 1
+
+    with pcol3:
+        # Show page indicator centered under the arrows
+        st.markdown(
+            f"<div style='text-align:center;font-size:0.8rem;color:#4A5568;'>Page {current_page} of {max_page}</div>",
+            unsafe_allow_html=True,
+        )
 
 # -------------------------------------------------------------------
 # MAIN APP
