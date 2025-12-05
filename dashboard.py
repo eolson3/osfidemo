@@ -2,8 +2,11 @@ import math
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-import pandas as pd
 import streamlit as st
+from streamlit.components.v1 import html  # <- add this line
+import pandas as pd
+# ... the rest of your imports
+
 
 # -----------------------------------------------------------------------------
 # Basic config
@@ -30,141 +33,157 @@ OSF_COLORS = {
 }
 
 def inject_osf_css() -> None:
-    """Inject global CSS so the app looks closer to the OSF dashboards."""
-    st.markdown(
-        """
-        <style>
-        /* Overall background */
-        .stApp, .stAppViewContainer, .block-container {
-            background-color: #F5F7FB;
-        }
+    """Inject global CSS so the app looks closer to the OSF dashboards.
 
-        /* Reduce top padding a bit */
-        .block-container {
-            padding-top: 0.75rem !important;
-        }
+    We use components.html so the <style> block is guaranteed to land in <head>.
+    """
+    css = """
+    <style>
+    /* PAGE BACKGROUND */
+    .stApp, .stAppViewContainer, .block-container {
+        background-color: #F5F7FB;
+    }
 
-        /* Header bar */
-        .osf-header {
-            background: #E8F1FB;
-            border-bottom: 1px solid #E2E8F0;
-            padding: 0.75rem 1.5rem;
-        }
+    .block-container {
+        padding-top: 0.75rem !important;
+        padding-bottom: 2rem !important;
+    }
 
-        .osf-header-title {
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: #092A47;
-            margin-bottom: 0.15rem;
-        }
+    /* HEADER BAR (logo + title area) */
+    .osf-header {
+        background: #E8F1FB;
+        border-bottom: 1px solid #E2E8F0;
+        padding: 0.75rem 1.5rem;
+        display: flex;
+        flex-direction: column;
+        gap: 0.15rem;
+    }
 
-        .osf-header-subtitle {
-            font-size: 0.9rem;
-            color: #3B4A5A;
-        }
+    .osf-header-topline {
+        display: flex;
+        align-items: center;
+        gap: 0.75rem;
+    }
 
-        /* Tabs (Summary / Users / Projects / ...) */
-        .stTabs [role="tablist"] {
-            border-bottom: 1px solid #E2E8F0;
-            padding-left: 1.5rem;
-            gap: 1.5rem;
-        }
+    .osf-header-title {
+        font-size: 1.4rem;
+        font-weight: 700;
+        color: #092A47;
+    }
 
-        .stTabs [role="tab"] {
-            font-weight: 600;
-            font-size: 0.95rem;
-            color: #092A47;
-            background: transparent;
-            padding: 0.6rem 0.2rem;
-            border-radius: 0;
-            border: none;
-        }
+    .osf-header-subtitle {
+        font-size: 0.9rem;
+        color: #3B4A5A;
+    }
 
-        .stTabs [role="tab"][aria-selected="true"] {
-            border-bottom: 3px solid #FF4B4B;
-        }
+    /* TOP NAV TABS (Summary / Users / Projects / ...) */
+    .stTabs [role="tablist"] {
+        border-bottom: 1px solid #E2E8F0;
+        padding-left: 1.5rem;
+        gap: 1.5rem;
+    }
 
-        /* Metric cards on Summary */
-        [data-testid="stMetric"] {
-            background-color: #FFFFFF;
-            border-radius: 18px;
-            padding: 1.5rem 1.75rem;
-            border: 1px solid #E2E8F0;
-        }
+    .stTabs [role="tab"] {
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: #092A47;
+        background: transparent;
+        padding: 0.6rem 0.2rem;
+        border-radius: 0;
+        border: none;
+        box-shadow: none;
+    }
 
-        [data-testid="stMetric"] > div > div:nth-child(1) {
-            color: #4A5568;
-            font-size: 0.85rem;
-            font-weight: 500;
-        }
+    .stTabs [role="tab"]:focus-visible {
+        outline: none;
+        box-shadow: none;
+    }
 
-        [data-testid="stMetric"] > div > div:nth-child(2) {
-            color: #092A47;
-            font-size: 1.6rem;
-            font-weight: 700;
-        }
+    .stTabs [role="tab"][aria-selected="true"] {
+        border-bottom: 3px solid #FF4B4B;  /* red active underline */
+    }
 
-        /* Generic “card” container used around charts */
-        .osf-card {
-            background: #FFFFFF;
-            border-radius: 18px;
-            border: 1px solid #E2E8F0;
-            padding: 1rem 1.25rem 1.25rem 1.25rem;
-        }
+    /* SUMMARY METRIC CARDS */
+    [data-testid="stMetric"] {
+        background-color: #FFFFFF;
+        border-radius: 18px;
+        padding: 1.5rem 1.75rem;
+        border: 1px solid #E2E8F0;
+    }
 
-        .osf-card-title {
-            font-weight: 600;
-            font-size: 0.95rem;
-            color: #092A47;
-            margin-top: 0.25rem;
-        }
+    [data-testid="stMetric"] > div > div:nth-child(1) {
+        color: #4A5568;
+        font-size: 0.85rem;
+        font-weight: 500;
+    }
 
-        /* Filters / Customize / Download buttons row */
-        .osf-top-buttons .stButton > button {
-            border-radius: 999px;
-            border: 1px solid #E2E8F0;
-            background-color: #FFFFFF;
-            color: #092A47;
-            font-weight: 600;
-            padding: 0.35rem 1.4rem;
-            font-size: 0.9rem;
-        }
+    [data-testid="stMetric"] > div > div:nth-child(2) {
+        color: #092A47;
+        font-size: 1.6rem;
+        font-weight: 700;
+    }
 
-        .osf-top-buttons .stButton > button:hover {
-            border-color: #092A47;
-        }
+    /* GENERIC CARD WRAPPER (around charts) */
+    .osf-card {
+        background: #FFFFFF;
+        border-radius: 18px;
+        border: 1px solid #E2E8F0;
+        padding: 1rem 1.25rem 1.25rem 1.25rem;
+    }
 
-        /* Data tables */
-        [data-testid="stDataFrame"] {
-            border-radius: 10px;
-            border: 1px solid #E2E8F0;
-        }
+    .osf-card-title {
+        font-weight: 600;
+        font-size: 0.95rem;
+        color: #092A47;
+        margin-top: 0.25rem;
+    }
 
-        /* Pagination controls */
-        .osf-pager {
-            text-align: right;
-            margin-top: 0.4rem;
-            margin-bottom: 0.4rem;
-        }
+    /* FILTER / CUSTOMIZE / DOWNLOAD BUTTON ROW */
+    .osf-top-buttons .stButton > button {
+        border-radius: 999px;
+        border: 1px solid #E2E8F0;
+        background-color: #FFFFFF;
+        color: #092A47;
+        font-weight: 600;
+        padding: 0.35rem 1.4rem;
+        font-size: 0.9rem;
+    }
 
-        .osf-pager button {
-            border-radius: 999px;
-            border: 1px solid #E2E8F0;
-            background-color: #FFFFFF;
-            padding: 0.15rem 0.6rem;
-            margin-left: 0.25rem;
-            font-size: 0.8rem;
-        }
+    .osf-top-buttons .stButton > button:hover {
+        border-color: #092A47;
+    }
 
-        .osf-table-count {
-            font-size: 0.9rem;
-            color: #4A5568;
-            margin-bottom: 0.2rem;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    /* TABLE WRAPPERS */
+    [data-testid="stDataFrame"] {
+        border-radius: 10px;
+        border: 1px solid #E2E8F0;
+    }
+
+    /* PAGINATION (our custom pager container) */
+    .osf-pager {
+        text-align: right;
+        margin-top: 0.4rem;
+        margin-bottom: 0.4rem;
+    }
+
+    .osf-pager button {
+        border-radius: 999px;
+        border: 1px solid #E2E8F0;
+        background-color: #FFFFFF;
+        padding: 0.15rem 0.6rem;
+        margin-left: 0.25rem;
+        font-size: 0.8rem;
+    }
+
+    .osf-table-count {
+        font-size: 0.9rem;
+        color: #4A5568;
+        margin-bottom: 0.2rem;
+    }
+    </style>
+    """
+    # This actually injects <style> into the DOM root.
+    html(css, height=0)
 
 
 # -----------------------------------------------------------------------------
@@ -577,6 +596,9 @@ def render_table_tab(
 
 def main():
     inject_osf_css()
+    st.set_page_config(layout="wide", page_title="OSF Institutions Dashboard (Demo)")
+    # ... rest of your code ...
+
 
     try:
         branding_row, summary_row, users, projects, registrations, preprints = load_data(DATA_FILE)
