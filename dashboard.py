@@ -523,22 +523,38 @@ with tabs[0]:
         )
 
     # Top 10 licenses
-    with cE:
-        if "license" in data_objects.columns:
-            lic = (
-                data_objects["license"]
-                .fillna("Unknown")
-                .replace("", "Unknown")
-                .value_counts()
-                .head(10)
-            )
-            bar_chart(
-                lic.index.tolist(),
-                lic.values.tolist(),
-                title="Top 10 Licenses",
-            )
-        else:
-            st.info("No license data available.")
+with cE:
+    # Build license series from projects + registrations + preprints only
+    license_series_parts = []
+    for df_ in (projects_raw, regs_raw, preprints_raw):
+        if "license" in df_.columns:
+            license_series_parts.append(df_["license"])
+
+    if license_series_parts:
+        s = pd.concat(license_series_parts, ignore_index=True)
+
+        # 1) Normalize: drop NaNs, make strings, normalize Unicode, trim spaces
+        s = s.dropna().astype(str)
+        s = s.str.normalize("NFKC")           # unify weird Unicode variants
+        s = s.str.strip()
+        s = s.str.replace(r"\s+", " ", regex=True)
+
+        # 2) Split multi-license cells (e.g., "CC BY 4.0|MIT")
+        s = s.str.split("|").explode().str.strip()
+
+        # 3) Replace empty with "Unknown"
+        s = s.replace("", "Unknown")
+
+        license_counts = s.value_counts().head(10)
+
+        bar_chart(
+            license_counts.index.tolist(),
+            license_counts.values.tolist(),
+            title="Top 10 Licenses",
+        )
+    else:
+        st.info("No license data available.")
+
 
     # Top 10 add-ons (split pipe-separated)
     with cF:
