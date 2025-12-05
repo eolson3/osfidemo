@@ -1,6 +1,6 @@
 # dashboard.py
 """
-Institutions Dashboard (Demo) – Single–CSV version
+Institutions Dashboard (Demo) – Single–CSV version with pure Streamlit tables.
 
 Expects a CSV with a `row_type` column containing:
   - summary
@@ -32,8 +32,6 @@ from collections import Counter
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
-from st_aggrid import AgGrid, GridOptionsBuilder, GridUpdateMode
-
 
 DATA_FILE = "institution_dashboard_data.csv"
 
@@ -96,23 +94,6 @@ def parse_float(value, default=0.0):
         return default
 
 
-def hyperlink_from_pipe(value: str) -> str:
-    """
-    Interpret values like 'Label|https://...' as markdown links.
-    If there's no pipe, assume the whole value is a URL and use it as label+href.
-    """
-    if not value:
-        return ""
-    value = str(value)
-    if "|" in value and "http" in value:
-        label, url = value.split("|", 1)
-        label, url = label.strip(), url.strip()
-        return f"[{label}]({url})"
-    if value.startswith("http"):
-        return f"[{value}]({value})"
-    return value
-
-
 def compute_summary_metrics(summary_row, users, preprints):
     """All numbers for the top summary cards live here."""
     total_users = len(users)
@@ -162,7 +143,6 @@ def inject_css():
     st.markdown(
         f"""
         <style>
-        /* Remove default Streamlit chrome but keep top padding so header isn't cut off */
         header {{visibility: hidden;}}
         #MainMenu {{visibility: hidden;}}
         footer {{visibility: hidden;}}
@@ -196,6 +176,7 @@ def inject_css():
             font-weight: 700;
             font-size: 0.9rem;
             color: #0e3454;
+            margin-right: 10px;
         }}
 
         .osf-brand-title {{
@@ -206,12 +187,6 @@ def inject_css():
         .osf-brand-subtitle {{
             font-size: 0.85rem;
             opacity: 0.9;
-        }}
-
-        .osf-tabs > div > button {{
-            border-radius: 999px 999px 0 0 !important;
-            padding: 0.45rem 1.6rem !important;
-            font-weight: 600;
         }}
 
         .osf-summary-card {{
@@ -250,10 +225,7 @@ def inject_css():
             border: 1px solid {CARD_BORDER};
             overflow: hidden;
             background: white;
-        }}
-
-        .ag-header-cell-label {{
-            justify-content: center;
+            padding: 0.25rem 0.25rem 0 0.25rem;
         }}
         </style>
         """,
@@ -310,9 +282,9 @@ def bar_chart(title, items_counter: Counter, top_n=10):
 
 
 # -------------------------------------------------------------------
-# AG-Grid helper (pagination + simple styling)
+# Table helper (pagination + basic styling)
 # -------------------------------------------------------------------
-def render_aggrid_table(
+def render_table(
     df: pd.DataFrame,
     page_key: str,
     columns_to_show,
@@ -320,24 +292,20 @@ def render_aggrid_table(
     height=420,
 ):
     """
-    Use AG Grid but with menu suppressed so only sort icons appear.
-    Pagination = 10 rows per page.
+    Render a paginated, non-editable table with sorting via native
+    Streamlit data editor. Index hidden; pagination controls appear below.
     """
     if link_columns is None:
         link_columns = []
 
-    # Prepare data – convert link-like columns to proper hyperlinks
-    grid_df = df.copy()
+    if not columns_to_show:
+        columns_to_show = [c for c in df.columns if c != "row_type"]
 
-    for col in link_columns:
-        if col in grid_df.columns:
-            grid_df[col] = grid_df[col].apply(hyperlink_from_pipe)
+    display_df = df[columns_to_show].copy()
 
-    grid_df = grid_df[columns_to_show]
-
-    # Page state
+    # Pagination state
     page_size = 10
-    total_rows = len(grid_df)
+    total_rows = len(display_df)
     total_pages = max(1, math.ceil(total_rows / page_size))
 
     current_page = st.session_state.get(page_key, 1)
@@ -346,32 +314,23 @@ def render_aggrid_table(
 
     start = (current_page - 1) * page_size
     end = start + page_size
-    page_df = grid_df.iloc[start:end]
+    page_df = display_df.iloc[start:end]
 
-    gb = GridOptionsBuilder.from_dataframe(page_df)
-    gb.configure_default_column(
-        sortable=True,
-        filter=False,
-        resizable=True,
-        suppressMenu=True,  # <-- no “Autosize / Hide column / Pin” menu
-    )
-    gb.configure_grid_options(
-        rowSelection="none",
-        pagination=False,  # we do pagination ourselves so controls can sit below
-        domLayout="normal",
-    )
-    grid_options = gb.build()
+    # Column configs for link columns
+    col_config = {}
+    for col in link_columns:
+        if col in page_df.columns:
+            # Expect these cells to contain full URLs; display text will be the URL itself
+            col_config[col] = st.column_config.LinkColumn(col)
 
     with st.container():
         st.markdown('<div class="osf-table-wrapper">', unsafe_allow_html=True)
-        AgGrid(
+        st.data_editor(
             page_df,
-            gridOptions=grid_options,
-            update_mode=GridUpdateMode.NO_UPDATE,
-            enable_enterprise_modules=False,
-            allow_unsafe_jscode=True,
+            hide_index=True,
+            disabled=True,
+            column_config=col_config,
             height=height,
-            theme="balham",
         )
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -406,15 +365,11 @@ def render_branding(summary_row):
     if not inst_name:
         inst_name = "Center For Open Science [Test]"
 
-    st.markdown(
-        "<div class='osf-brand-bar'>",
-        unsafe_allow_html=True,
-    )
+    st.markdown("<div class='osf-brand-bar'>", unsafe_allow_html=True)
 
     if logo_url:
-        # Just show the logo as an img if we have it; else fallback circle
         st.markdown(
-            f"<img src='{logo_url}' style='width:40px;height:40px;border-radius:999px;margin-right:10px;'>",
+            f"<img src='{logo_url}' style='width:40px;height:40px;border-radius:999px;'>",
             unsafe_allow_html=True,
         )
     else:
@@ -423,7 +378,6 @@ def render_branding(summary_row):
             unsafe_allow_html=True,
         )
 
-    # Title + subtitle stacked – use columns trick so they appear inline with logo
     col_title, _ = st.columns([4, 1])
     with col_title:
         st.markdown(
@@ -487,7 +441,7 @@ def render_summary_tab(summary_row, users, projects, registrations, preprints):
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Donuts row 1: Users by dept, Public vs Private projects, Public vs Embargoed regs
+    # Donuts row 1
     st.markdown('<div class="osf-section-title">Overview</div>', unsafe_allow_html=True)
     c1, c2, c3 = st.columns(3)
 
@@ -502,9 +456,9 @@ def render_summary_tab(summary_row, users, projects, registrations, preprints):
             list(dept_counts.values()),
             [ACCENT_BLUE, ACCENT_ORANGE, ACCENT_PINK, ACCENT_PURPLE],
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
-    # Public vs private projects – use summary numbers
+    # Public vs private projects
     with c2:
         fig = donut_chart(
             "Public vs Private Projects",
@@ -512,7 +466,7 @@ def render_summary_tab(summary_row, users, projects, registrations, preprints):
             [metrics["public_projects"], metrics["private_projects"]],
             [ACCENT_BLUE, ACCENT_PINK],
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     with c3:
         fig = donut_chart(
@@ -521,14 +475,13 @@ def render_summary_tab(summary_row, users, projects, registrations, preprints):
             [metrics["public_regs"], metrics["embargoed_regs"]],
             [ACCENT_BLUE, ACCENT_PINK],
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
     # Total OSF objects donut + Top 10 Licenses + Top 10 Add-ons (bars)
     c1, c2, c3 = st.columns(3)
 
-    # Total OSF objects donut
     with c1:
         labels = [
             "Public registrations",
@@ -552,17 +505,15 @@ def render_summary_tab(summary_row, users, projects, registrations, preprints):
             "#ffb36b",
         ]
         fig = donut_chart("Total OSF Objects", labels, values, colors)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
-    # Top 10 licenses – bar chart
     with c2:
         license_counts = Counter(
             lic for lic in projects.get("license", []) if lic not in ("", "-")
         )
         fig = bar_chart("Top 10 Licenses", license_counts)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
-    # Top 10 add-ons – bar chart
     with c3:
         add_on_counter = Counter()
         for val in projects.get("add_ons", []):
@@ -573,7 +524,7 @@ def render_summary_tab(summary_row, users, projects, registrations, preprints):
                 if name:
                     add_on_counter[name] += 1
         fig = bar_chart("Top 10 Add-ons", add_on_counter)
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
     st.markdown("<br>", unsafe_allow_html=True)
 
@@ -596,19 +547,17 @@ def render_summary_tab(summary_row, users, projects, registrations, preprints):
             list(storage_counts.values()),
             [ACCENT_BLUE, ACCENT_ORANGE, ACCENT_PINK, ACCENT_PURPLE],
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig)
 
 
 def users_toolbar(users: pd.DataFrame):
     """Right-aligned: Has ORCID, Department dropdown, Customize, Download, Chart."""
     cols = st.columns([4, 1.4, 2.4, 1.4, 0.9, 0.9])
 
-    # Filtered view is held in session_state
     has_orcid_key = "users_filter_has_orcid"
     dept_key = "users_filter_department"
     customize_key = "users_customize_cols"
 
-    # Left (count)
     with cols[0]:
         st.markdown(
             f"<span style='font-weight:600;color:{PRIMARY_BLUE};font-size:0.95rem;'>"
@@ -658,9 +607,7 @@ def users_toolbar(users: pd.DataFrame):
             selected = st.multiselect(
                 "",
                 options=all_possible,
-                default=[
-                    c for c in default_cols if c in all_possible
-                ],
+                default=[c for c in default_cols if c in all_possible],
                 label_visibility="collapsed",
                 key=customize_key,
             )
@@ -679,7 +626,6 @@ def users_toolbar(users: pd.DataFrame):
     with cols[5]:
         st.button("📊", help="(placeholder) Additional charts")
 
-    # Apply filters
     filtered = users.copy()
     if has_orcid:
         filtered = filtered[filtered["orcid_id"].astype(str).str.strip().ne("")]
@@ -687,7 +633,6 @@ def users_toolbar(users: pd.DataFrame):
     if dept_choice != "All departments":
         filtered = filtered[filtered["department"] == dept_choice]
 
-    # Which columns to show
     selected_cols = st.session_state.get(customize_key)
     if not selected_cols:
         selected_cols = [
@@ -749,7 +694,9 @@ def generic_toolbar(label: str, df: pd.DataFrame, customize_key: str, download_n
     with cols[3]:
         st.button("📊", help="(placeholder) Additional charts", key=f"{download_name}_charts")
 
-    selected_cols = st.session_state.get(customize_key) or [c for c in df.columns if c not in ("row_type",)]
+    selected_cols = st.session_state.get(customize_key) or [
+        c for c in df.columns if c not in ("row_type",)
+    ]
     selected_cols = [c for c in selected_cols if c in df.columns]
 
     return df, selected_cols
@@ -772,66 +719,60 @@ def main():
     # Branding header
     render_branding(summary_row)
 
-    # Tabs – labels only, no counts
     tabs = st.tabs(["Summary", "Users", "Projects", "Registrations", "Preprints"])
-    # Add CSS class to tabs container
-    st.markdown(
-        "<script>var el = window.parent.document.querySelector('.stTabs'); if (el) el.classList.add('osf-tabs');</script>",
-        unsafe_allow_html=True,
-    )
 
-    # -------------------- Summary --------------------
+    # Summary
     with tabs[0]:
         render_summary_tab(summary_row, users, projects, registrations, preprints)
 
-    # -------------------- Users ----------------------
+    # Users
     with tabs[1]:
         st.markdown("### Users")
         filtered_users, user_cols = users_toolbar(users)
-        render_aggrid_table(
+        render_table(
             filtered_users,
             page_key="users_page",
             columns_to_show=user_cols,
             link_columns=["osf_link", "creator_orcid"],
         )
 
-    # -------------------- Projects -------------------
+    # Projects
     with tabs[2]:
         st.markdown("### Projects")
         filtered_projects, proj_cols = generic_toolbar(
             "Projects", projects, "projects_customize_cols", "projects"
         )
-        render_aggrid_table(
+        render_table(
             filtered_projects,
             page_key="projects_page",
             columns_to_show=proj_cols,
-            link_columns=["osf_link", "contributor_name", "funder_name"],
+            link_columns=["osf_link"],
         )
 
-    # -------------------- Registrations --------------
+    # Registrations
     with tabs[3]:
         st.markdown("### Registrations")
         filtered_regs, reg_cols = generic_toolbar(
             "Registrations", registrations, "registrations_customize_cols", "registrations"
         )
-        render_aggrid_table(
+        render_table(
             filtered_regs,
             page_key="registrations_page",
             columns_to_show=reg_cols,
-            link_columns=["osf_link", "contributor_name", "funder_name"],
+            link_columns=["osf_link"],
         )
 
-    # -------------------- Preprints ------------------
+    # Preprints
     with tabs[4]:
         st.markdown("### Preprints")
         filtered_preprints, pre_cols = generic_toolbar(
             "Preprints", preprints, "preprints_customize_cols", "preprints"
         )
-        render_aggrid_table(
+        render_table(
             filtered_preprints,
             page_key="preprints_page",
             columns_to_show=pre_cols,
-            link_columns=["osf_link", "contributor_name", "funder_name"],
+            link_columns=["osf_link", "doi"],
         )
 
 
