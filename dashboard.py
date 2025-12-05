@@ -24,7 +24,7 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
     """
     Load unified CSV.
 
-    Expects a column `row_type` with values:
+    Expects a column whose name *normalizes* to 'row_type' with values:
       - branding
       - summary
       - user
@@ -32,11 +32,35 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
       - registration
       - preprint
     """
-    df = pd.read_csv(path, dtype=str).fillna("")
+    # Read as strings, don't drop NA yet
+    df = pd.read_csv(path, dtype=str)
 
-    if "row_type" not in df.columns:
-        st.error("CSV must include a 'row_type' column (branding/summary/user/project/registration/preprint).")
+    # Normalize column names (strip spaces, lowercase)
+    original_cols = list(df.columns)
+    normalized_cols = [c.strip() for c in original_cols]
+    df.columns = normalized_cols
+
+    # Try to find a column that *means* row_type
+    row_type_col = None
+    for col in df.columns:
+        if col.strip().lower() == "row_type":
+            row_type_col = col
+            break
+
+    if row_type_col is None:
+        # Helpful debug info so you can see what headers it sees
+        st.error(
+            "CSV must include a 'row_type' column "
+            "(branding/summary/user/project/registration/preprint).\n\n"
+            f"Columns found: {original_cols}"
+        )
         st.stop()
+
+    # If the exact name is not 'row_type', rename it for internal use
+    if row_type_col != "row_type":
+        df["row_type"] = df[row_type_col]
+
+    df = df.fillna("")
 
     branding_df = df[df["row_type"] == "branding"]
     summary_df = df[df["row_type"] == "summary"]
@@ -49,6 +73,7 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
     summary_row = summary_df.iloc[0] if not summary_df.empty else pd.Series(dtype=object)
 
     return branding_row, summary_row, users, projects, registrations, preprints
+
 
 
 def _safe_int(series: pd.Series, key: str, default: int = 0) -> int:
