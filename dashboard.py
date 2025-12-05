@@ -80,7 +80,7 @@ st.markdown(
         background-color: #ffffff;
         border: 1px solid #d0d4da;
         border-radius: 8px;
-        padding: 0.5rem 0.75rem;
+        padding: 0.5rem 0.75rem 0.25rem 0.75rem;
         margin-top: 0.25rem;
         max-width: 320px;
         box-shadow: 0 2px 4px rgba(15, 23, 42, 0.08);
@@ -90,6 +90,12 @@ st.markdown(
     [data-testid="stSidebar"],
     [data-testid="stSidebarNav"],
     [data-testid="collapsedControl"] {
+        display: none !important;
+    }
+
+    /* Hide AG Grid header menu & context menu so only sort-by-click remains */
+    .ag-header-cell-menu-button,
+    .ag-menu {
         display: none !important;
     }
     </style>
@@ -111,8 +117,7 @@ PREPRINTS_CSV = DATA_DIR / "2025-12-04_preprints-search-results.csv"
 
 @st.cache_data
 def load_users(path: Path) -> pd.DataFrame:
-    df = pd.read_csv(path)
-    return df
+    return pd.read_csv(path)
 
 
 @st.cache_data
@@ -284,6 +289,78 @@ def render_pagination_controls(page_key: str, total_rows: int, page_size: int = 
     with last_col:
         if st.button("≫", key=page_key + "_last") and page != total_pages:
             st.session_state[page_key] = total_pages
+
+
+def prepare_link_columns(df: pd.DataFrame) -> pd.DataFrame:
+    """Convert obvious link-ish columns so Streamlit can treat them as links."""
+    df = df.copy()
+    if "DOI" in df.columns:
+        def to_doi_url(x):
+            if isinstance(x, str):
+                s = x.strip()
+                if not s or s == "-":
+                    return ""
+                if s.startswith("http"):
+                    return s
+                return "https://doi.org/" + s
+            return ""
+        df["DOI"] = df["DOI"].apply(to_doi_url)
+
+    # Nothing special for OSF Link; it's already a URL in the exports.
+    return df
+
+
+def build_link_column_config(df: pd.DataFrame):
+    cfg = {}
+    for col in df.columns:
+        lower = col.lower()
+        if col in ("OSF Link", "DOI") or "url" in lower or "link" in lower:
+            cfg[col] = st.column_config.LinkColumn(col)
+    return cfg
+
+
+def customize_columns_box(all_existing, prefix: str):
+    """OSF-style 'Customize' panel with search + checkbox list."""
+    state_key = f"{prefix}_cols_state"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = {c: True for c in all_existing}
+    state = st.session_state[state_key]
+
+    st.markdown('<div class="customize-box">', unsafe_allow_html=True)
+    search = st.text_input("Show columns", key=f"{prefix}_col_search")
+    search_lower = search.lower().strip()
+    filtered = [
+        c for c in all_existing if search_lower in c.lower()
+    ]
+
+    selected_cols = []
+    for col in filtered:
+        checked = st.checkbox(
+            col,
+            value=state.get(col, True),
+            key=f"{prefix}_col_{col}",
+        )
+        state[col] = checked
+        if checked:
+            selected_cols.append(col)
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.session_state[state_key] = state
+
+    if not selected_cols:
+        # fall back to whatever is checked overall, or all
+        selected_cols = [c for c, v in state.items() if v] or all_existing
+    return selected_cols
+
+
+def get_saved_columns(all_existing, prefix: str):
+    """When customize panel is closed, respect last saved column choices."""
+    state_key = f"{prefix}_cols_state"
+    if state_key not in st.session_state:
+        return all_existing
+    state = st.session_state[state_key]
+    selected_cols = [c for c in all_existing if state.get(c, True)]
+    return selected_cols or all_existing
 
 
 # =====================================================
@@ -591,20 +668,12 @@ with tab_users:
         all_existing = [c for c in all_cols if c in display.columns]
 
         if st.session_state["users_show_customize"]:
-            st.markdown('<div class="customize-box">', unsafe_allow_html=True)
-            selected_cols = st.multiselect(
-                "Show columns",
-                options=all_existing,
-                default=all_existing,
-                key="users_columns",
-            )
-            st.markdown("</div>", unsafe_allow_html=True)
+            selected_cols = customize_columns_box(all_existing, "users")
         else:
-            selected_cols = all_existing
+            selected_cols = get_saved_columns(all_existing, "users")
 
         display = display[selected_cols]
 
-        # Download button using current filters/columns
         csv_bytes = display.to_csv(index=False).encode("utf-8")
         with ctop3:
             st.download_button(
@@ -617,8 +686,10 @@ with tab_users:
             )
 
         st.markdown("#### Results")
-        page_df, total_rows = get_page_df(display, page_key="users_page", page_size=10)
-        st.dataframe(page_df, hide_index=True)
+        display_links = prepare_link_columns(display)
+        page_df, total_rows = get_page_df(display_links, page_key="users_page", page_size=10)
+        col_cfg = build_link_column_config(page_df)
+        st.dataframe(page_df, hide_index=True, column_config=col_cfg)
         render_pagination_controls("users_page", total_rows, page_size=10)
 
 
@@ -694,7 +765,6 @@ with tab_projects:
                     )
 
             # Date created (year)
-            year_selected = None
             if "dateCreated" in projects_raw.columns:
                 with st.expander("Date created", expanded=False):
                     years = (
@@ -706,14 +776,12 @@ with tab_projects:
                     )
                     years = sorted(years)
                     options = ["All years"] + [str(y) for y in years]
-                    choice = st.selectbox(
+                    _ = st.selectbox(
                         "Year created",
                         options=options,
                         index=0,
                         key="projects_year_filter",
                     )
-                    if choice != "All years":
-                        year_selected = int(choice)
 
             # Funder
             if "funder.name" in projects_raw.columns:
@@ -929,16 +997,9 @@ with tab_projects:
             all_existing = [c for c in all_cols if c in display.columns]
 
             if st.session_state["projects_show_customize"]:
-                st.markdown('<div class="customize-box">', unsafe_allow_html=True)
-                selected_cols = st.multiselect(
-                    "Show columns",
-                    options=all_existing,
-                    default=all_existing,
-                    key="projects_columns",
-                )
-                st.markdown("</div>", unsafe_allow_html=True)
+                selected_cols = customize_columns_box(all_existing, "projects")
             else:
-                selected_cols = all_existing
+                selected_cols = get_saved_columns(all_existing, "projects")
 
             display = display[selected_cols]
 
@@ -954,10 +1015,12 @@ with tab_projects:
                 )
 
             st.markdown("#### Results")
+            display_links = prepare_link_columns(display)
             page_df, total_rows = get_page_df(
-                display, page_key="projects_page", page_size=10
+                display_links, page_key="projects_page", page_size=10
             )
-            st.dataframe(page_df, hide_index=True)
+            col_cfg = build_link_column_config(page_df)
+            st.dataframe(page_df, hide_index=True, column_config=col_cfg)
             render_pagination_controls("projects_page", total_rows, page_size=10)
 
 
@@ -1028,7 +1091,6 @@ with tab_regs:
                         key="regs_creator_filter",
                     )
 
-            year_selected = None
             if "dateCreated" in regs_raw.columns:
                 with st.expander("Date created", expanded=False):
                     years = (
@@ -1040,14 +1102,12 @@ with tab_regs:
                     )
                     years = sorted(years)
                     options = ["All years"] + [str(y) for y in years]
-                    choice = st.selectbox(
+                    _ = st.selectbox(
                         "Year created",
                         options=options,
                         index=0,
                         key="regs_year_filter",
                     )
-                    if choice != "All years":
-                        year_selected = int(choice)
 
             if "rights.name" in regs_raw.columns:
                 with st.expander("License", expanded=False):
@@ -1189,16 +1249,9 @@ with tab_regs:
             all_existing = [c for c in all_cols if c in display.columns]
 
             if st.session_state["regs_show_customize"]:
-                st.markdown('<div class="customize-box">', unsafe_allow_html=True)
-                selected_cols = st.multiselect(
-                    "Show columns",
-                    options=all_existing,
-                    default=all_existing,
-                    key="regs_columns",
-                )
-                st.markdown("</div>", unsafe_allow_html=True)
+                selected_cols = customize_columns_box(all_existing, "regs")
             else:
-                selected_cols = all_existing
+                selected_cols = get_saved_columns(all_existing, "regs")
 
             display = display[selected_cols]
 
@@ -1214,10 +1267,12 @@ with tab_regs:
                 )
 
             st.markdown("#### Results")
+            display_links = prepare_link_columns(display)
             page_df, total_rows = get_page_df(
-                display, page_key="regs_page", page_size=10
+                display_links, page_key="regs_page", page_size=10
             )
-            st.dataframe(page_df, hide_index=True)
+            col_cfg = build_link_column_config(page_df)
+            st.dataframe(page_df, hide_index=True, column_config=col_cfg)
             render_pagination_controls("regs_page", total_rows, page_size=10)
 
 
@@ -1286,7 +1341,6 @@ with tab_preprints:
                         key="preprints_creator_filter",
                     )
 
-            year_selected = None
             if "dateCreated" in preprints_raw.columns:
                 with st.expander("Date created", expanded=False):
                     years = (
@@ -1298,14 +1352,12 @@ with tab_preprints:
                     )
                     years = sorted(years)
                     options = ["All years"] + [str(y) for y in years]
-                    choice = st.selectbox(
+                    _ = st.selectbox(
                         "Year created",
                         options=options,
                         index=0,
                         key="preprints_year_filter",
                     )
-                    if choice != "All years":
-                        year_selected = int(choice)
 
             subj_col_raw = next(
                 (c for c in preprints_raw.columns if "subject" in c.lower()),
@@ -1396,16 +1448,9 @@ with tab_preprints:
             all_existing = [c for c in all_cols if c in display.columns]
 
             if st.session_state["preprints_show_customize"]:
-                st.markdown('<div class="customize-box">', unsafe_allow_html=True)
-                selected_cols = st.multiselect(
-                    "Show columns",
-                    options=all_existing,
-                    default=all_existing,
-                    key="preprints_columns",
-                )
-                st.markdown("</div>", unsafe_allow_html=True)
+                selected_cols = customize_columns_box(all_existing, "preprints")
             else:
-                selected_cols = all_existing
+                selected_cols = get_saved_columns(all_existing, "preprints")
 
             display = display[selected_cols]
 
@@ -1424,8 +1469,10 @@ with tab_preprints:
             st.metric("Preprints (rows)", fmt(len(display)))
 
             st.markdown("#### Results")
+            display_links = prepare_link_columns(display)
             page_df, total_rows = get_page_df(
-                display, page_key="preprints_page", page_size=10
+                display_links, page_key="preprints_page", page_size=10
             )
-            st.dataframe(page_df, hide_index=True)
+            col_cfg = build_link_column_config(page_df)
+            st.dataframe(page_df, hide_index=True, column_config=col_cfg)
             render_pagination_controls("preprints_page", total_rows, page_size=10)
