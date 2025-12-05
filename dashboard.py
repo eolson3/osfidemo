@@ -17,10 +17,64 @@ st.set_page_config(
 )
 
 # -------------------------------------------------------------------
+# GLOBAL STYLE
+# -------------------------------------------------------------------
+
+
+def inject_css() -> None:
+    """
+    Lightweight style tweaks to get closer to the OSF Institutions dashboard.
+    """
+    st.markdown(
+        """
+        <style>
+        /* Overall background */
+        .stApp {
+            background-color: #f5f7fb;
+        }
+
+        /* Main content padding */
+        .block-container {
+            padding-top: 0.5rem;
+            padding-left: 2rem;
+            padding-right: 2rem;
+        }
+
+        /* Tab styling */
+        div[data-baseweb="tab-list"] > div[role="tab"] {
+            font-size: 14px;
+            font-weight: 600;
+            color: #4A5568;
+            padding: 0.75rem 1.5rem;
+        }
+
+        div[data-baseweb="tab-list"] > div[role="tab"][aria-selected="true"] {
+            color: #E02424;                 /* OSF-ish red accent */
+            border-bottom: 2px solid #E02424;
+        }
+
+        /* Metric text a bit darker */
+        .stMetric label {
+            color: #4A5568;
+        }
+        .stMetric span {
+            color: #1A365D;
+            font-weight: 600;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# -------------------------------------------------------------------
 # DATA LOADING
 # -------------------------------------------------------------------
 
-def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+
+def load_data(
+    path: Path,
+) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
     Load unified CSV.
 
@@ -61,9 +115,11 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
 
     return branding_row, summary_row, users, projects, registrations, preprints
 
+
 # -------------------------------------------------------------------
 # SMALL HELPERS
 # -------------------------------------------------------------------
+
 
 def _safe_int(value, default: int = 0) -> int:
     try:
@@ -133,9 +189,11 @@ def build_link_column_config(df: pd.DataFrame) -> Dict:
 
     return cfg
 
+
 # -------------------------------------------------------------------
 # HEADER
 # -------------------------------------------------------------------
+
 
 def render_header(branding_row: pd.Series, summary_row: pd.Series) -> None:
     institution_name = branding_row.get("branding_institution_name", "OSF Institution [Demo]")
@@ -154,7 +212,7 @@ def render_header(branding_row: pd.Series, summary_row: pd.Series) -> None:
             '<div style="width:48px;height:48px;border-radius:50%;'
             'background:#0b2233;display:flex;align-items:center;justify-content:center;'
             'font-weight:700;font-size:20px;margin-right:12px;color:#ffffff;">'
-            f'{initials}</div>'
+            f"{initials}</div>"
         )
 
     subtitle_bits = ["Institutions Dashboard (Demo)"]
@@ -193,15 +251,19 @@ def render_header(branding_row: pd.Series, summary_row: pd.Series) -> None:
         unsafe_allow_html=True,
     )
 
+
 # -------------------------------------------------------------------
 # SUMMARY TAB
 # -------------------------------------------------------------------
 
-def render_summary_tab(summary_row: pd.Series,
-                       users: pd.DataFrame,
-                       projects: pd.DataFrame,
-                       registrations: pd.DataFrame,
-                       preprints: pd.DataFrame) -> None:
+
+def render_summary_tab(
+    summary_row: pd.Series,
+    users: pd.DataFrame,
+    projects: pd.DataFrame,
+    registrations: pd.DataFrame,
+    preprints: pd.DataFrame,
+) -> None:
     st.markdown("### Summary")
 
     total_users = len(users)
@@ -222,9 +284,11 @@ def render_summary_tab(summary_row: pd.Series,
         total_public_files = 0
 
     all_content = pd.concat(
-        [projects.assign(_src="project"),
-         registrations.assign(_src="registration"),
-         preprints.assign(_src="preprint")],
+        [
+            projects.assign(_src="project"),
+            registrations.assign(_src="registration"),
+            preprints.assign(_src="preprint"),
+        ],
         ignore_index=True,
     )
     if "storage_gb" in all_content.columns:
@@ -263,16 +327,15 @@ def render_summary_tab(summary_row: pd.Series,
 
     st.write("---")
 
-    # Donut helper
+    # Donut helper with OSF-ish color palette
     def donut_from_counts(title: str, counts: Dict[str, int]) -> None:
-        data = pd.DataFrame(
-            {"category": list(counts.keys()), "value": list(counts.values())}
-        )
+        data = pd.DataFrame({"category": list(counts.keys()), "value": list(counts.values())})
         if data["value"].sum() <= 0:
             st.caption(f"{title}: no data")
             return
 
         spec = {
+            "data": {"values": data.to_dict(orient="records")},
             "mark": {"type": "arc", "innerRadius": 60},
             "encoding": {
                 "theta": {"field": "value", "type": "quantitative"},
@@ -280,6 +343,18 @@ def render_summary_tab(summary_row: pd.Series,
                     "field": "category",
                     "type": "nominal",
                     "legend": {"orient": "bottom"},
+                    "scale": {
+                        "range": [
+                            "#12A5ED",  # bright blue
+                            "#2B6CB0",  # darker blue
+                            "#F56565",  # red
+                            "#ED8936",  # orange
+                            "#48BB78",  # green
+                            "#9F7AEA",  # purple
+                            "#718096",  # gray
+                            "#A0AEC0",  # light gray
+                        ]
+                    },
                 },
                 "tooltip": [
                     {"field": "category", "type": "nominal"},
@@ -287,7 +362,7 @@ def render_summary_tab(summary_row: pd.Series,
                 ],
             },
         }
-        st.vega_lite_chart(data, spec, width="stretch")
+        st.vega_lite_chart(spec, use_container_width=True)
         st.caption(title)
 
     # Users by department
@@ -327,12 +402,7 @@ def render_summary_tab(summary_row: pd.Series,
     license_counts: Dict[str, int] = {}
     if "license" in all_content.columns:
         series = (
-            all_content["license"]
-            .fillna("")
-            .replace("", pd.NA)
-            .dropna()
-            .value_counts()
-            .head(10)
+            all_content["license"].fillna("").replace("", pd.NA).dropna().value_counts().head(10)
         )
         license_counts = series.to_dict()
 
@@ -372,9 +442,11 @@ def render_summary_tab(summary_row: pd.Series,
     with c7:
         donut_from_counts("Top Storage Regions", region_counts)
 
+
 # -------------------------------------------------------------------
-# GENERIC TABLE TAB
+# GENERIC TABLE TAB (Projects / Registrations / Preprints)
 # -------------------------------------------------------------------
+
 
 def render_table_tab(
     label: str,
@@ -387,9 +459,7 @@ def render_table_tab(
     st.markdown(f"### {label}")
     st.markdown(f"**{len(df):,} {count_label}**")
 
-    # ------------------------------------------------------------------
     # ACTION ROW: right-aligned buttons (Filters / Customize / Download)
-    # ------------------------------------------------------------------
     spacer, action_col1, action_col2, action_col3 = st.columns([6, 1, 1, 1])
 
     filters_state_key = f"{key_prefix}_filters_open"
@@ -407,14 +477,16 @@ def render_table_tab(
         if st.button("Customize", key=f"{key_prefix}_customize_btn"):
             st.session_state[customize_state_key] = not st.session_state[customize_state_key]
 
-    # We'll fill the Download CSV button after we have the filtered view
     download_container = action_col3
 
-    st.markdown("<div style='margin-top:0.25rem;margin-bottom:0.25rem;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        "<div style='margin-top:0.25rem;margin-bottom:0.25rem;'></div>",
+        unsafe_allow_html=True,
+    )
 
     work_df = df.copy()
 
-    # --- Filters ---
+    # Filters drawer
     if st.session_state[filters_state_key] and filter_config:
         st.markdown("#### Filters")
         for col_name, cfg in filter_config.items():
@@ -438,7 +510,9 @@ def render_table_tab(
                 if selected:
                     mask = pd.Series(True, index=work_df.index)
                     for val in selected:
-                        mask &= work_df[col_name].astype(str).str.contains(str(val), na=False)
+                        mask &= work_df[col_name].astype(str).str.contains(
+                            str(val), na=False
+                        )
                     work_df = work_df[mask]
             elif ftype == "selectbox":
                 choice = st.selectbox(
@@ -449,10 +523,12 @@ def render_table_tab(
                 if choice != "All":
                     work_df = work_df[work_df[col_name] == choice]
 
-    # --- Customize columns ---
+    # Customize columns
     visible_key = f"{key_prefix}_visible_columns"
     if visible_key not in st.session_state:
-        visible = [c for c in default_columns if c in work_df.columns] or list(work_df.columns)
+        visible = [c for c in default_columns if c in work_df.columns] or list(
+            work_df.columns
+        )
         st.session_state[visible_key] = visible
 
     if st.session_state[customize_state_key]:
@@ -487,8 +563,10 @@ def render_table_tab(
         st.info("No rows match the current filters.")
         return
 
-    # --- Paginate then display ---
-    page_df, total_filtered, max_page, current_page = paginate_df(work_df, key_prefix=key_prefix, page_size=10)
+    # Paginate then display
+    page_df, total_filtered, max_page, current_page = paginate_df(
+        work_df, key_prefix=key_prefix, page_size=10
+    )
 
     st.markdown(
         f"<div style='font-size:0.9rem;color:#4A5568;margin-bottom:0.2rem;'>{total_filtered} results</div>",
@@ -526,13 +604,184 @@ def render_table_tab(
             unsafe_allow_html=True,
         )
 
+
+# -------------------------------------------------------------------
+# USERS TAB (with Has ORCID + department)
+# -------------------------------------------------------------------
+
+
+def render_users_tab(users: pd.DataFrame) -> None:
+    st.markdown("### Users")
+    st.markdown(f"**{len(users):,} Total Users**")
+
+    # Column names
+    name_col = "name_or_title"
+    dept_col = None
+    for candidate in ["department", "Department", "dept"]:
+        if candidate in users.columns:
+            dept_col = candidate
+            break
+    orcid_col = None
+    for candidate in ["orcid_id", "ORCID", "creator_orcid"]:
+        if candidate in users.columns:
+            orcid_col = candidate
+            break
+
+    # Top controls row: Has ORCID | Department | spacer | Customize | Download
+    c_has, c_dept, spacer, c_custom, c_download = st.columns([1, 2, 4, 1, 1])
+
+    with c_has:
+        has_orcid = st.checkbox("Has ORCID", key="users_has_orcid")
+
+    if dept_col:
+        dept_vals = sorted(
+            [v for v in users[dept_col].unique() if str(v).strip() != ""]
+        )
+        dept_options = ["All departments"] + dept_vals
+    else:
+        dept_options = ["All departments"]
+
+    with c_dept:
+        dept_choice = st.selectbox(
+            "Department",
+            dept_options,
+            key="users_dept",
+        )
+
+    customize_state_key = "users_customize_open"
+    if customize_state_key not in st.session_state:
+        st.session_state[customize_state_key] = False
+
+    with c_custom:
+        if st.button("Customize", key="users_custom_btn"):
+            st.session_state[customize_state_key] = not st.session_state[customize_state_key]
+
+    download_container = c_download
+
+    st.markdown(
+        "<div style='margin-top:0.25rem;margin-bottom:0.25rem;'></div>",
+        unsafe_allow_html=True,
+    )
+
+    # Apply Has ORCID / Department filters
+    work_df = users.copy()
+
+    if has_orcid and orcid_col:
+        series = work_df[orcid_col].astype(str).str.strip()
+        mask = (~series.eq("")) & (~series.eq("-")) & (~series.str.lower().eq("none"))
+        work_df = work_df[mask]
+
+    if dept_col and dept_choice != "All departments":
+        work_df = work_df[work_df[dept_col] == dept_choice]
+
+    # Customize columns (like other tabs)
+    default_columns = [
+        name_col,
+        dept_col if dept_col else "",
+        "osf_link",
+        orcid_col if orcid_col else "",
+        "public_projects",
+        "private_projects",
+        "public_registration_count",
+        "embargoed_registration_count",
+        "published_preprint_count",
+        "public_file_count",
+        "storage_gb",
+        "month_last_login",
+        "month_last_active",
+    ]
+    default_columns = [c for c in default_columns if c and c in work_df.columns]
+
+    visible_key = "users_visible_columns"
+    if visible_key not in st.session_state:
+        st.session_state[visible_key] = default_columns or list(work_df.columns)
+
+    if st.session_state[customize_state_key]:
+        st.markdown("#### Customize columns")
+        all_cols = list(work_df.columns)
+        selected = st.multiselect(
+            "Columns to display",
+            all_cols,
+            default=st.session_state[visible_key],
+            key="users_custom_cols",
+        )
+        if selected:
+            st.session_state[visible_key] = selected
+
+    visible_cols = [c for c in st.session_state[visible_key] if c in work_df.columns]
+    if not visible_cols:
+        visible_cols = list(work_df.columns)
+
+    work_df = work_df[visible_cols]
+
+    # Download CSV (filtered + visible)
+    with download_container:
+        if not work_df.empty:
+            download_link_from_df(
+                work_df,
+                filename="users_filtered.csv",
+                label="Download CSV",
+                key="users_download_btn",
+            )
+
+    if work_df.empty:
+        st.info("No rows match the current filters.")
+        return
+
+    # Paginate then display
+    page_df, total_filtered, max_page, current_page = paginate_df(
+        work_df, key_prefix="users", page_size=10
+    )
+
+    st.markdown(
+        f"<div style='font-size:0.9rem;color:#4A5568;margin-bottom:0.2rem;'>{total_filtered} results</div>",
+        unsafe_allow_html=True,
+    )
+
+    col_cfg = build_link_column_config(page_df)
+
+    st.dataframe(
+        page_df,
+        hide_index=True,
+        width="stretch",
+        column_config=col_cfg,
+    )
+
+    # Pagination BELOW the table
+    st.markdown("<div style='margin-top:0.3rem;'></div>", unsafe_allow_html=True)
+
+    page_key = "users_page"
+    pcol1, pcol2, pcol3, pcol4, pcol5 = st.columns([3, 1, 1, 1, 3])
+
+    with pcol2:
+        if st.button("«", key=f"{page_key}_first") and total_filtered > 0:
+            st.session_state[page_key] = 1
+    with pcol3:
+        if st.button("‹", key=f"{page_key}_prev") and current_page > 1:
+            st.session_state[page_key] = current_page - 1
+    with pcol4:
+        if st.button("›", key=f"{page_key}_next") and current_page < max_page:
+            st.session_state[page_key] = current_page + 1
+
+    with pcol3:
+        st.markdown(
+            f"<div style='text-align:center;font-size:0.8rem;color:#4A5568;'>Page {current_page} of {max_page}</div>",
+            unsafe_allow_html=True,
+        )
+
+
 # -------------------------------------------------------------------
 # MAIN APP
 # -------------------------------------------------------------------
 
+
 def main() -> None:
+    inject_css()
+
     try:
-        branding_row, summary_row, users, projects, registrations, preprints = load_data(DATA_FILE)
+        branding_row, summary_row, users, projects, registrations, preprints = load_data(
+            DATA_FILE
+        )
     except FileNotFoundError:
         st.error(
             f"Could not find CSV file at `{DATA_FILE.name}`. "
@@ -550,34 +799,7 @@ def main() -> None:
         render_summary_tab(summary_row, users, projects, registrations, preprints)
 
     with tab_users:
-        users_default_cols = [
-            "name_or_title",
-            "department",
-            "osf_link",
-            "orcid_id",
-            "public_projects",
-            "private_projects",
-            "public_registration_count",
-            "embargoed_registration_count",
-            "published_preprint_count",
-            "public_file_count",
-            "storage_gb",
-            "month_last_login",
-            "month_last_active",
-        ]
-
-        users_filters = {
-            "department": {"type": "selectbox", "label": "Department"},
-        }
-
-        render_table_tab(
-            label="Users",
-            df=users,
-            default_columns=users_default_cols,
-            filter_config=users_filters,
-            key_prefix="users",
-            count_label="Users",
-        )
+        render_users_tab(users)
 
     with tab_projects:
         proj_default_cols = [
