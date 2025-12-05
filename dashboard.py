@@ -114,7 +114,6 @@ st.markdown(
 # DATA LOADING
 # ---------------------------------------------------
 
-@st.cache_data
 def load_data(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path, dtype=str)
 
