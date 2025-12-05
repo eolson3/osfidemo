@@ -2,15 +2,12 @@ import math
 from pathlib import Path
 from typing import Dict, List, Tuple
 
-import streamlit as st
-from streamlit.components.v1 import html  # <- add this line
 import pandas as pd
-# ... the rest of your imports
+import streamlit as st
 
-
-# -----------------------------------------------------------------------------
-# Basic config
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------
+# CONFIG
+# -------------------------------------------------------------------
 
 DATA_FILE = Path(__file__).parent / "osfi_dashboard_data_with_summary_and_branding.csv"
 
@@ -19,180 +16,13 @@ st.set_page_config(
     layout="wide",
 )
 
-# -----------------------------------------------------------------------------
-# Styling – OSF-ish look & feel
-# -----------------------------------------------------------------------------
-
-OSF_COLORS = {
-    "navy": "#092A47",        # main text / nav
-    "light_blue": "#E8F1FB",  # header background
-    "accent": "#FF4B4B",      # active tab underline
-    "border": "#E2E8F0",      # card & table borders
-    "body_bg": "#F5F7FB",     # page background
-    "metric_bg": "#F3F7FD",
-}
-
-def inject_osf_css() -> None:
-    """Inject global CSS so the app looks closer to the OSF dashboards.
-
-    We use components.html so the <style> block is guaranteed to land in <head>.
-    """
-    css = """
-    <style>
-    /* PAGE BACKGROUND */
-    .stApp, .stAppViewContainer, .block-container {
-        background-color: #F5F7FB;
-    }
-
-    .block-container {
-        padding-top: 0.75rem !important;
-        padding-bottom: 2rem !important;
-    }
-
-    /* HEADER BAR (logo + title area) */
-    .osf-header {
-        background: #E8F1FB;
-        border-bottom: 1px solid #E2E8F0;
-        padding: 0.75rem 1.5rem;
-        display: flex;
-        flex-direction: column;
-        gap: 0.15rem;
-    }
-
-    .osf-header-topline {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
-    }
-
-    .osf-header-title {
-        font-size: 1.4rem;
-        font-weight: 700;
-        color: #092A47;
-    }
-
-    .osf-header-subtitle {
-        font-size: 0.9rem;
-        color: #3B4A5A;
-    }
-
-    /* TOP NAV TABS (Summary / Users / Projects / ...) */
-    .stTabs [role="tablist"] {
-        border-bottom: 1px solid #E2E8F0;
-        padding-left: 1.5rem;
-        gap: 1.5rem;
-    }
-
-    .stTabs [role="tab"] {
-        font-weight: 600;
-        font-size: 0.95rem;
-        color: #092A47;
-        background: transparent;
-        padding: 0.6rem 0.2rem;
-        border-radius: 0;
-        border: none;
-        box-shadow: none;
-    }
-
-    .stTabs [role="tab"]:focus-visible {
-        outline: none;
-        box-shadow: none;
-    }
-
-    .stTabs [role="tab"][aria-selected="true"] {
-        border-bottom: 3px solid #FF4B4B;  /* red active underline */
-    }
-
-    /* SUMMARY METRIC CARDS */
-    [data-testid="stMetric"] {
-        background-color: #FFFFFF;
-        border-radius: 18px;
-        padding: 1.5rem 1.75rem;
-        border: 1px solid #E2E8F0;
-    }
-
-    [data-testid="stMetric"] > div > div:nth-child(1) {
-        color: #4A5568;
-        font-size: 0.85rem;
-        font-weight: 500;
-    }
-
-    [data-testid="stMetric"] > div > div:nth-child(2) {
-        color: #092A47;
-        font-size: 1.6rem;
-        font-weight: 700;
-    }
-
-    /* GENERIC CARD WRAPPER (around charts) */
-    .osf-card {
-        background: #FFFFFF;
-        border-radius: 18px;
-        border: 1px solid #E2E8F0;
-        padding: 1rem 1.25rem 1.25rem 1.25rem;
-    }
-
-    .osf-card-title {
-        font-weight: 600;
-        font-size: 0.95rem;
-        color: #092A47;
-        margin-top: 0.25rem;
-    }
-
-    /* FILTER / CUSTOMIZE / DOWNLOAD BUTTON ROW */
-    .osf-top-buttons .stButton > button {
-        border-radius: 999px;
-        border: 1px solid #E2E8F0;
-        background-color: #FFFFFF;
-        color: #092A47;
-        font-weight: 600;
-        padding: 0.35rem 1.4rem;
-        font-size: 0.9rem;
-    }
-
-    .osf-top-buttons .stButton > button:hover {
-        border-color: #092A47;
-    }
-
-    /* TABLE WRAPPERS */
-    [data-testid="stDataFrame"] {
-        border-radius: 10px;
-        border: 1px solid #E2E8F0;
-    }
-
-    /* PAGINATION (our custom pager container) */
-    .osf-pager {
-        text-align: right;
-        margin-top: 0.4rem;
-        margin-bottom: 0.4rem;
-    }
-
-    .osf-pager button {
-        border-radius: 999px;
-        border: 1px solid #E2E8F0;
-        background-color: #FFFFFF;
-        padding: 0.15rem 0.6rem;
-        margin-left: 0.25rem;
-        font-size: 0.8rem;
-    }
-
-    .osf-table-count {
-        font-size: 0.9rem;
-        color: #4A5568;
-        margin-bottom: 0.2rem;
-    }
-    </style>
-    """
-    # This actually injects <style> into the DOM root.
-    html(css, height=0)
-
-
-# -----------------------------------------------------------------------------
-# Data loading & helpers
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------
+# DATA LOADING
+# -------------------------------------------------------------------
 
 def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """
-    Load the unified CSV.
+    Load unified CSV.
 
     Expects a column `row_type` with values:
       - branding
@@ -205,7 +35,7 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
     df = pd.read_csv(path, dtype=str).fillna("")
 
     if "row_type" not in df.columns:
-        st.error("CSV must include a 'row_type' column.")
+        st.error("CSV must include a 'row_type' column (branding/summary/user/project/registration/preprint).")
         st.stop()
 
     branding_df = df[df["row_type"] == "branding"]
@@ -238,28 +68,40 @@ def _safe_float(series: pd.Series, key: str, default: float = 0.0) -> float:
 
 
 def paginate_df(df: pd.DataFrame, key_prefix: str, page_size: int = 10) -> pd.DataFrame:
+    """Return a slice of df for the current page and render simple pager buttons."""
     total = len(df)
-    max_page = max(1, math.ceil(total / page_size))
+    if total == 0:
+        return df
 
+    max_page = max(1, math.ceil(total / page_size))
     page_key = f"{key_prefix}_page"
+
     if page_key not in st.session_state:
         st.session_state[page_key] = 1
 
     col_left, col_right = st.columns([3, 1])
     with col_left:
-        st.markdown(f'<div class="osf-table-count">{total} results</div>', unsafe_allow_html=True)
+        st.markdown(
+            f"<div style='font-size:0.9rem;color:#4A5568;margin-bottom:0.2rem;'>{total} results</div>",
+            unsafe_allow_html=True,
+        )
     with col_right:
-        st.markdown('<div class="osf-pager">', unsafe_allow_html=True)
+        current = st.session_state[page_key]
+        st.markdown("<div style='text-align:right;'>", unsafe_allow_html=True)
         c1, c2, c3 = st.columns(3)
         with c1:
             if st.button("«", key=f"{page_key}_first") and total > 0:
                 st.session_state[page_key] = 1
         with c2:
-            if st.button("‹", key=f"{page_key}_prev") and st.session_state[page_key] > 1:
-                st.session_state[page_key] -= 1
+            if st.button("‹", key=f"{page_key}_prev") and current > 1:
+                st.session_state[page_key] = current - 1
         with c3:
-            if st.button("›", key=f"{page_key}_next") and st.session_state[page_key] < max_page:
-                st.session_state[page_key] += 1
+            if st.button("›", key=f"{page_key}_next") and current < max_page:
+                st.session_state[page_key] = current + 1
+        st.markdown(
+            f"<span style='font-size:0.8rem;color:#4A5568;'>Page {st.session_state[page_key]} of {max_page}</span>",
+            unsafe_allow_html=True,
+        )
         st.markdown("</div>", unsafe_allow_html=True)
 
     start = (st.session_state[page_key] - 1) * page_size
@@ -267,54 +109,97 @@ def paginate_df(df: pd.DataFrame, key_prefix: str, page_size: int = 10) -> pd.Da
     return df.iloc[start:end]
 
 
-def download_link_from_df(df: pd.DataFrame, filename: str, label: str) -> None:
+def download_link_from_df(df: pd.DataFrame, filename: str, label: str, key: str) -> None:
     csv = df.to_csv(index=False).encode("utf-8")
     st.download_button(
         label=label,
         data=csv,
         file_name=filename,
         mime="text/csv",
+        key=key,
     )
 
 
-# -----------------------------------------------------------------------------
-# Header & layout helpers
-# -----------------------------------------------------------------------------
+def build_link_column_config(df: pd.DataFrame) -> Dict:
+    """
+    Treat any column that looks like a URL or Label|URL as clickable.
+    """
+    cfg = {}
+    for col in df.columns:
+        lower = col.lower()
+        # if column name smells like a URL/link
+        if "url" in lower or "link" in lower:
+            cfg[col] = st.column_config.LinkColumn(col)
+        else:
+            # or values look like URLs
+            sample = df[col].dropna().astype(str).head(20)
+            if not sample.empty and (sample.str.startswith("http").mean() > 0.6):
+                cfg[col] = st.column_config.LinkColumn(col)
+    return cfg
 
-def render_header(branding_row: pd.Series) -> None:
-    name = branding_row.get("institution_name", "Center For Open Science [Test]")
-    subtitle = branding_row.get("dashboard_subtitle", "Institutions Dashboard (Demo)")
-    report_month = branding_row.get("report_month", "")
+# -------------------------------------------------------------------
+# HEADER
+# -------------------------------------------------------------------
 
+def render_header(branding_row: pd.Series, summary_row: pd.Series) -> None:
+    institution_name = branding_row.get("institution_name", "OSF Institution [Demo]")
+    subtitle_base = branding_row.get("dashboard_subtitle", "Institutions Dashboard (Demo)")
+    report_month = summary_row.get("report_month", "") or branding_row.get("report_month", "")
+    subtitle = subtitle_base
     if report_month:
-        subtitle = f"{subtitle} • Report month: {report_month}"
+        subtitle = f"{subtitle_base} • Report month: {report_month}"
 
     logo_url = branding_row.get("logo_url", "").strip()
 
-    with st.container():
-        st.markdown('<div class="osf-header">', unsafe_allow_html=True)
-        c1, c2, c3 = st.columns([0.7, 6, 1.5])
+    if logo_url:
+        logo_html = (
+            f'<img src="{logo_url}" '
+            'style="width:48px;height:48px;border-radius:50%;object-fit:cover;'
+            'margin-right:12px;" />'
+        )
+    else:
+        initials = "".join([w[0] for w in institution_name.split()[:2]]).upper()
+        logo_html = (
+            '<div style="width:48px;height:48px;border-radius:50%;'
+            'background:#0b2233;display:flex;align-items:center;justify-content:center;'
+            'font-weight:700;font-size:20px;margin-right:12px;color:#ffffff;">'
+            f'{initials}</div>'
+        )
 
-        with c1:
-            if logo_url:
-                st.image(logo_url, width=52)
-            else:
-                st.write("")  # empty
+    st.markdown(
+        f"""
+        <div style="
+            background:#12364a;
+            padding:16px 32px;
+            display:flex;
+            align-items:center;
+            justify-content:space-between;
+            color:#ffffff;
+            box-shadow:0 4px 10px rgba(0,0,0,0.18);
+            margin-bottom:0.5rem;
+        ">
+          <div style="display:flex;align-items:center;">
+            {logo_html}
+            <div>
+              <div style="font-size:20px;font-weight:700;letter-spacing:0.01em;">
+                {institution_name}
+              </div>
+              <div style="font-size:13px;opacity:0.9;margin-top:2px;">
+                {subtitle}
+              </div>
+            </div>
+          </div>
+          <div style="font-size:13px;opacity:0.9;">
+            Demo view
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-        with c2:
-            st.markdown(f'<div class="osf-header-title">{name}</div>', unsafe_allow_html=True)
-            st.markdown(f'<div class="osf-header-subtitle">{subtitle}</div>', unsafe_allow_html=True)
-
-        with c3:
-            # Right-side placeholder (like user menu in real OSF)
-            st.write("")
-
-        st.markdown("</div>", unsafe_allow_html=True)
-
-
-# -----------------------------------------------------------------------------
-# Summary tab
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------
+# SUMMARY TAB
+# -------------------------------------------------------------------
 
 def render_summary_tab(summary_row: pd.Series,
                        users: pd.DataFrame,
@@ -323,8 +208,7 @@ def render_summary_tab(summary_row: pd.Series,
                        preprints: pd.DataFrame) -> None:
     st.markdown("### Summary")
 
-    # --- Top metric tiles (2 rows of 4) ---
-    totals = {
+    metrics = {
         "Total Users": _safe_int(summary_row, "total_users"),
         "Total Monthly Logged in Users": _safe_int(summary_row, "total_monthly_logged_in_users"),
         "Total Monthly Active Users": _safe_int(summary_row, "total_monthly_active_users"),
@@ -335,40 +219,34 @@ def render_summary_tab(summary_row: pd.Series,
         "Total Storage in GB": _safe_float(summary_row, "total_storage_gb"),
     }
 
-    labels = list(totals.keys())
-    values = list(totals.values())
+    labels = list(metrics.keys())
+    values = list(metrics.values())
 
-    # first row
-    row1 = st.columns(4)
-    for col, idx in zip(row1, range(4)):
+    # 2 rows of 4 metrics
+    top_row = st.columns(4)
+    for col, idx in zip(top_row, range(4)):
         with col:
             st.metric(label=labels[idx], value=f"{values[idx]:,}")
 
-    # second row
-    row2 = st.columns(4)
-    for col, idx in zip(row2, range(4, 8)):
+    bot_row = st.columns(4)
+    for col, idx in zip(bot_row, range(4, 8)):
         with col:
-            # allow float for GB
             val = values[idx]
-            if isinstance(val, float) and not val.is_integer():
+            if isinstance(val, float) and not float(val).is_integer():
                 v_str = f"{val:,.1f}"
             else:
                 v_str = f"{int(val):,}"
             st.metric(label=labels[idx], value=v_str)
 
-    st.write("")
+    st.write("---")
 
-    # --- Donut + bar charts ---
-    # For charts we use Vega-Lite via st.vega_lite_chart (no extra deps).
-
+    # Helper for donuts using Vega-Lite
     def donut_from_counts(title: str, counts: Dict[str, int]):
         data = pd.DataFrame(
             {"category": list(counts.keys()), "value": list(counts.values())}
         )
         if data["value"].sum() <= 0:
-            st.markdown(f'<div class="osf-card"><div class="osf-card-title">{title}</div>'
-                        '<p style="font-size:0.85rem;color:#718096;margin-top:0.5rem;">No data.</p></div>',
-                        unsafe_allow_html=True)
+            st.caption(f"{title}: no data")
             return
 
         spec = {
@@ -378,6 +256,7 @@ def render_summary_tab(summary_row: pd.Series,
                 "color": {
                     "field": "category",
                     "type": "nominal",
+                    "legend": {"orient": "bottom"},
                 },
                 "tooltip": [
                     {"field": "category", "type": "nominal"},
@@ -385,13 +264,10 @@ def render_summary_tab(summary_row: pd.Series,
                 ],
             },
         }
+        st.vega_lite_chart(data, spec, width="stretch")
+        st.caption(title)
 
-        st.markdown('<div class="osf-card">', unsafe_allow_html=True)
-        st.vega_lite_chart(data, spec, use_container_width=True)
-        st.markdown(f'<div class="osf-card-title">{title}</div>', unsafe_allow_html=True)
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # Users by department from users table
+    # Users by department: derive from users table
     dept_col = None
     for candidate in ["department", "Department", "dept"]:
         if candidate in users.columns:
@@ -403,13 +279,13 @@ def render_summary_tab(summary_row: pd.Series,
         series = users[dept_col].replace("", "Unknown").value_counts()
         users_by_dept = series.to_dict()
 
-    # Public vs Private Projects from summary
+    # Public vs Private projects (from summary row)
     proj_counts = {
         "Public": _safe_int(summary_row, "public_projects_count"),
         "Private": _safe_int(summary_row, "private_projects_count"),
     }
 
-    # Public vs Embargoed Registrations from summary
+    # Public vs Embargoed registrations (from summary row)
     reg_counts = {
         "Public": _safe_int(summary_row, "public_registrations_count"),
         "Embargoed": _safe_int(summary_row, "embargoed_registrations_count"),
@@ -423,12 +299,9 @@ def render_summary_tab(summary_row: pd.Series,
     with c3:
         donut_from_counts("Public vs Embargoed Registrations", reg_counts)
 
-    st.write("")
+    st.write("---")
 
-    # Total OSF Objects donut: public/embargoed regs, public/private projects, preprints
-    osf_objects = {
-        "Public registrations": proj_counts.get("Public", 0) * 0,  # placeholder to keep keys consistent
-    }
+    # Total OSF objects donut (exclude users)
     osf_objects = {
         "Public registrations": _safe_int(summary_row, "public_registrations_count"),
         "Embargoed registrations": _safe_int(summary_row, "embargoed_registrations_count"),
@@ -437,7 +310,7 @@ def render_summary_tab(summary_row: pd.Series,
         "Preprints": _safe_int(summary_row, "total_preprints"),
     }
 
-    # Top 10 licenses from projects/registrations/preprints
+    # Top 10 licenses: from projects + registrations + preprints (just counts)
     all_content = pd.concat(
         [projects.assign(_src="project"),
          registrations.assign(_src="registration"),
@@ -463,7 +336,7 @@ def render_summary_tab(summary_row: pd.Series,
         )
         license_counts = series.to_dict()
 
-    # Top Add-ons from summary row: any column starting with 'addon_'
+    # Add-ons from summary row: columns like addon_google_drive, addon_dropbox, ...
     addon_counts: Dict[str, int] = {}
     for col in summary_row.index:
         if col.startswith("addon_"):
@@ -478,9 +351,9 @@ def render_summary_tab(summary_row: pd.Series,
     with c6:
         donut_from_counts("Top 10 Add-ons", addon_counts)
 
-    st.write("")
+    st.write("---")
 
-    # Storage regions from summary columns starting with storage_region_
+    # Storage regions from summary row: storage_region_united_states, etc.
     region_counts: Dict[str, int] = {}
     for col in summary_row.index:
         if col.startswith("storage_region_"):
@@ -491,10 +364,9 @@ def render_summary_tab(summary_row: pd.Series,
     with c7:
         donut_from_counts("Top Storage Regions", region_counts)
 
-
-# -----------------------------------------------------------------------------
-# Generic tab renderer for Users / Projects / Registrations / Preprints
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------
+# GENERIC TABLE TAB
+# -------------------------------------------------------------------
 
 def render_table_tab(
     label: str,
@@ -502,63 +374,71 @@ def render_table_tab(
     default_columns: List[str],
     filter_config: Dict,
     key_prefix: str,
+    count_label: str,
 ) -> None:
     st.markdown(f"### {label}")
 
-    total_label = f"{len(df):,} Total {label}"
-    st.markdown(f"**{total_label}**")
+    st.markdown(f"**{len(df):,} {count_label}**")
 
-    # --- Top right buttons (Filters / Customize / Download CSV) ---
-    st.markdown('<div class="osf-top-buttons">', unsafe_allow_html=True)
+    # Top actions row: Filters / Customize / Download
+    st.markdown("<div style='margin-top:0.25rem;margin-bottom:0.25rem;'></div>", unsafe_allow_html=True)
     bcol1, bcol2, bcol3 = st.columns([1, 1, 1])
     with bcol1:
         show_filters = st.checkbox("Filters", key=f"{key_prefix}_filters_open", value=False)
     with bcol2:
         show_customize = st.checkbox("Customize", key=f"{key_prefix}_customize_open", value=False)
     with bcol3:
-        download_clicked = st.checkbox("Download CSV", key=f"{key_prefix}_download_clicked", value=False)
-    st.markdown("</div>", unsafe_allow_html=True)
+        do_download = st.checkbox("Download CSV", key=f"{key_prefix}_download_open", value=False)
 
     work_df = df.copy()
 
-    # --- Filters (very simple AND filters, per-column) ---
-    if show_filters:
+    # --- Filters ---
+    if show_filters and filter_config:
         st.markdown("#### Filters")
         for col_name, cfg in filter_config.items():
             if col_name not in work_df.columns:
                 continue
+            col_label = cfg.get("label", col_name)
+            ftype = cfg.get("type", "multiselect")
 
-            col_type = cfg.get("type", "multiselect")
-            label_txt = cfg.get("label", col_name)
-            options = sorted([o for o in work_df[col_name].unique() if str(o).strip() != ""])
-
+            options = sorted(
+                [v for v in work_df[col_name].unique() if str(v).strip() != ""]
+            )
             if not options:
                 continue
 
-            if col_type == "multiselect":
-                selected = st.multiselect(label_txt, options, key=f"{key_prefix}_f_{col_name}")
+            if ftype == "multiselect":
+                selected = st.multiselect(
+                    col_label,
+                    options,
+                    key=f"{key_prefix}_f_{col_name}",
+                )
                 if selected:
-                    # AND semantics: row must match all selected values (for comma-separated lists)
+                    # AND behavior: for text columns containing multiple values,
+                    # require that each selected value appears in that cell.
                     mask = pd.Series(True, index=work_df.index)
-                    for opt in selected:
-                        mask &= work_df[col_name].astype(str).str.contains(str(opt), na=False)
+                    for val in selected:
+                        mask &= work_df[col_name].astype(str).str.contains(str(val), na=False)
                     work_df = work_df[mask]
-            elif col_type == "selectbox":
-                selected = st.selectbox(label_txt, ["All"] + options, key=f"{key_prefix}_f_{col_name}")
-                if selected != "All":
-                    work_df = work_df[work_df[col_name] == selected]
+            elif ftype == "selectbox":
+                choice = st.selectbox(
+                    col_label,
+                    ["All"] + options,
+                    key=f"{key_prefix}_f_{col_name}",
+                )
+                if choice != "All":
+                    work_df = work_df[work_df[col_name] == choice]
 
     # --- Customize columns ---
     visible_key = f"{key_prefix}_visible_columns"
     if visible_key not in st.session_state:
-        # Initialize with intersection of defaults and actual columns
-        st.session_state[visible_key] = [c for c in default_columns if c in work_df.columns]
+        st.session_state[visible_key] = [c for c in default_columns if c in work_df.columns] or list(work_df.columns)
 
     if show_customize:
-        st.markdown("#### Show columns")
+        st.markdown("#### Customize columns")
         all_cols = list(work_df.columns)
         selected = st.multiselect(
-            "Choose columns to display",
+            "Columns to display",
             all_cols,
             default=st.session_state[visible_key],
             key=f"{key_prefix}_custom_cols",
@@ -572,34 +452,35 @@ def render_table_tab(
 
     work_df = work_df[visible_cols]
 
-    # --- Download CSV (filtered + visible columns) ---
-    if download_clicked and not work_df.empty:
-        download_link_from_df(work_df, f"{label.lower()}_filtered.csv", "Download current view as CSV")
+    # --- Download CSV (filtered, visible columns) ---
+    if do_download and not work_df.empty:
+        download_link_from_df(
+            work_df,
+            filename=f"{label.lower()}_filtered.csv",
+            label="Download current view as CSV",
+            key=f"{key_prefix}_download_btn",
+        )
 
-    # --- Paginate and display ---
+    # --- Paginate + display ---
     if work_df.empty:
         st.info("No rows match the current filters.")
         return
 
     page_df = paginate_df(work_df, key_prefix=key_prefix, page_size=10)
+    col_cfg = build_link_column_config(page_df)
 
     st.dataframe(
         page_df,
-        use_container_width=True,
         hide_index=True,
+        width="stretch",
+        column_config=col_cfg,
     )
 
-
-# -----------------------------------------------------------------------------
-# Main app
-# -----------------------------------------------------------------------------
+# -------------------------------------------------------------------
+# MAIN APP
+# -------------------------------------------------------------------
 
 def main():
-    inject_osf_css()
-    st.set_page_config(layout="wide", page_title="OSF Institutions Dashboard (Demo)")
-    # ... rest of your code ...
-
-
     try:
         branding_row, summary_row, users, projects, registrations, preprints = load_data(DATA_FILE)
     except FileNotFoundError:
@@ -609,35 +490,36 @@ def main():
         )
         return
 
-    render_header(branding_row)
+    render_header(branding_row, summary_row)
 
-    tab_labels = ["Summary", "Users", "Projects", "Registrations", "Preprints"]
-    summary_tab, users_tab, projects_tab, regs_tab, preprints_tab = st.tabs(tab_labels)
+    tab_summary, tab_users, tab_projects, tab_regs, tab_preprints = st.tabs(
+        ["Summary", "Users", "Projects", "Registrations", "Preprints"]
+    )
 
-    with summary_tab:
+    with tab_summary:
         render_summary_tab(summary_row, users, projects, registrations, preprints)
 
-    with users_tab:
+    with tab_users:
         users_default_cols = [
-            "name",
+            "name_or_title",
             "department",
             "osf_link",
-            "orcid",
+            "orcid_id",
             "public_projects",
             "private_projects",
-            "public_registrations",
-            "embargoed_registrations",
-            "preprints",
-            "public_files",
-            "total_storage_gb",
+            "public_registration_count",
+            "embargoed_registration_count",
+            "published_preprint_count",
+            "public_file_count",
+            "storage_gb",
             "account_created",
-            "last_login",
-            "last_active",
+            "month_last_login",
+            "month_last_active",
         ]
 
         users_filters = {
             "department": {"type": "selectbox", "label": "Department"},
-            # Example extra filter: ORCID present/absent if you add such a column
+            # You can add ORCID has/hasn't by making a separate column if needed
         }
 
         render_table_tab(
@@ -646,31 +528,33 @@ def main():
             default_columns=users_default_cols,
             filter_config=users_filters,
             key_prefix="users",
+            count_label="Users",
         )
 
-    with projects_tab:
+    with tab_projects:
         proj_default_cols = [
-            "title",
-            "link",
+            "name_or_title",
+            "osf_link",
             "created_date",
             "modified_date",
             "doi",
-            "storage_location",
-            "total_data_osf",
+            "storage_region",
+            "storage_gb",
             "contributor_name",
             "views_last_30_days",
             "license",
             "resource_type",
             "funder_name",
-            "institution",
-            "is_collection",
+            "add_ons",
         ]
 
         proj_filters = {
-            "creator": {"type": "multiselect", "label": "Creator"},
+            "contributor_name": {"type": "multiselect", "label": "Creator"},
             "license": {"type": "multiselect", "label": "License"},
             "resource_type": {"type": "multiselect", "label": "Resource type"},
-            "institution": {"type": "multiselect", "label": "Institution"},
+            "storage_region": {"type": "multiselect", "label": "Storage region"},
+            "funder_name": {"type": "multiselect", "label": "Funder"},
+            "add_ons": {"type": "multiselect", "label": "Add-ons"},
         }
 
         render_table_tab(
@@ -679,27 +563,31 @@ def main():
             default_columns=proj_default_cols,
             filter_config=proj_filters,
             key_prefix="projects",
+            count_label="Projects",
         )
 
-    with regs_tab:
+    with tab_regs:
         reg_default_cols = [
-            "title",
-            "link",
+            "name_or_title",
+            "osf_link",
             "created_date",
             "modified_date",
             "doi",
-            "storage_location",
-            "total_data_osf",
+            "storage_region",
+            "storage_gb",
             "contributor_name",
             "views_last_30_days",
             "license",
-            "subject",
+            "resource_type",
+            "funder_name",
         ]
 
         reg_filters = {
-            "creator": {"type": "multiselect", "label": "Creator"},
+            "contributor_name": {"type": "multiselect", "label": "Creator"},
             "license": {"type": "multiselect", "label": "License"},
-            "subject": {"type": "multiselect", "label": "Subject"},
+            "resource_type": {"type": "multiselect", "label": "Resource type"},
+            "storage_region": {"type": "multiselect", "label": "Storage region"},
+            "funder_name": {"type": "multiselect", "label": "Funder"},
         }
 
         render_table_tab(
@@ -708,25 +596,25 @@ def main():
             default_columns=reg_default_cols,
             filter_config=reg_filters,
             key_prefix="registrations",
+            count_label="Registrations",
         )
 
-    with preprints_tab:
+    with tab_preprints:
         pp_default_cols = [
-            "title",
-            "link",
+            "name_or_title",
+            "osf_link",
             "created_date",
             "modified_date",
             "doi",
-            "license",
             "contributor_name",
             "views_last_30_days",
-            "subject",
+            "downloads_last_30_days",
+            "license",
         ]
 
         pp_filters = {
-            "creator": {"type": "multiselect", "label": "Creator"},
+            "contributor_name": {"type": "multiselect", "label": "Creator"},
             "license": {"type": "multiselect", "label": "License"},
-            "subject": {"type": "multiselect", "label": "Subject"},
         }
 
         render_table_tab(
@@ -735,6 +623,7 @@ def main():
             default_columns=pp_default_cols,
             filter_config=pp_filters,
             key_prefix="preprints",
+            count_label="Preprints",
         )
 
 
