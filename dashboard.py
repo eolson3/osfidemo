@@ -58,8 +58,7 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
     # If we STILL don't have anything, hard fail with debug info
     if row_type_col is None:
         st.error(
-            "CSV must include a 'row_type' column "
-            "(with values like summary/user/project/registration/preprint).\n\n"
+st.error("ROW_TYPE DEBUG CHECK – this message is from the CURRENT file.")
             f"Raw columns: {original_cols}\n"
             f"Normalized columns: {df.columns.tolist()}"
         )
