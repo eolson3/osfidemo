@@ -9,7 +9,7 @@ import streamlit as st
 # CONFIG
 # ---------------------------------------------------
 
-DATA_FILE = Path(__file__).parent / "osfi_institutions_dashboard.csv"
+DATA_FILE = Path(__file__).parent / "osf_institutions_dashboard.csv"
 
 st.set_page_config(
     page_title="OSF Institutions Dashboard (Demo)",
