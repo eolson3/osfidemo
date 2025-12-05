@@ -118,7 +118,6 @@ st.markdown(
 def load_data(path: Path) -> pd.DataFrame:
     df = pd.read_csv(path, dtype=str)
 
-    # numeric-ish columns
     numeric_cols = [
         "storage_byte_count",
         "storage_gb",
@@ -134,6 +133,8 @@ def load_data(path: Path) -> pd.DataFrame:
         "projects_private_count",
         "registrations_public_count",
         "registrations_embargoed_count",
+        "summary_monthly_logged_in_users",
+        "summary_monthly_active_users",
     ]
     for col in numeric_cols:
         if col in df.columns:
@@ -174,7 +175,6 @@ else:
     INSTITUTION_LOGO_URL = ""
     REPORT_MONTH_LABEL = ""
 
-# fallback to report_yearmonth from users
 if not REPORT_MONTH_LABEL and "report_yearmonth" in users_raw.columns:
     rm = (
         users_raw["report_yearmonth"]
@@ -219,7 +219,7 @@ st.markdown("</div>", unsafe_allow_html=True)
 # HELPERS
 # ---------------------------------------------------
 
-def donut_chart(labels, values, title=None):
+def donut_chart(labels, values, title=None, height=280):
     if not labels or not values:
         st.info("No data available.")
         return
@@ -237,7 +237,7 @@ def donut_chart(labels, values, title=None):
     fig.update_layout(
         showlegend=True,
         margin=dict(l=0, r=0, t=0, b=0),
-        height=280,
+        height=height,
     )
     if title:
         st.markdown(f"**{title}**")
@@ -291,13 +291,10 @@ def render_pagination_controls(total_pages, current_page, key_prefix):
 
 
 def build_link_column_config(df: pd.DataFrame):
-    """Treat URL-ish columns as clickable links."""
     cfg = {}
     for col in df.columns:
         lower = col.lower()
-        # header-based hint
         is_link_col = "link" in lower or "url" in lower
-        # value-based hint
         if not is_link_col:
             sample = df[col].dropna().astype(str).head(20)
             if not sample.empty and (sample.str.startswith("http").mean() > 0.6):
@@ -339,12 +336,33 @@ def get_saved_columns(all_existing, prefix: str):
     return selected_cols or all_existing
 
 
+# ---------------------------------------------------
+# SUMMARY METRICS (TILES)
+# ---------------------------------------------------
+
 def compute_summary_metrics():
+    # Total counts from data (still reliable)
     total_users = len(users_raw)
-    total_projects = len(projects_raw)
-    total_regs = len(regs_raw)
+
+    # Projects/registrations from summary if provided, else from data
+    proj_pub = summary_meta.get("projects_public_count") if not summary_meta.empty else None
+    proj_priv = summary_meta.get("projects_private_count") if not summary_meta.empty else None
+    reg_pub = summary_meta.get("registrations_public_count") if not summary_meta.empty else None
+    reg_emb = summary_meta.get("registrations_embargoed_count") if not summary_meta.empty else None
+
+    if pd.notna(proj_pub) or pd.notna(proj_priv):
+        total_projects = (proj_pub or 0) + (proj_priv or 0)
+    else:
+        total_projects = len(projects_raw)
+
+    if pd.notna(reg_pub) or pd.notna(reg_emb):
+        total_regs = (reg_pub or 0) + (reg_emb or 0)
+    else:
+        total_regs = len(regs_raw)
+
     total_preprints = len(preprints_raw)
 
+    # Public files & storage from users or summary later if you ever want
     total_public_files = (
         users_raw.get("public_file_count", pd.Series([], dtype=float)).fillna(0).sum()
     )
@@ -353,24 +371,35 @@ def compute_summary_metrics():
         users_raw.get("storage_gb", pd.Series([], dtype=float)).fillna(0).sum()
     )
 
-    logged_in_users = (
-        users_raw.get("month_last_login", pd.Series([], dtype=str)).notna().sum()
-    )
-    active_users = (
-        users_raw.get("month_last_active", pd.Series([], dtype=str)).notna().sum()
-    )
+    # Monthly logged-in / active: prefer summary write-ins
+    if not summary_meta.empty:
+        logged_in_users = summary_meta.get("summary_monthly_logged_in_users")
+        active_users = summary_meta.get("summary_monthly_active_users")
+    else:
+        logged_in_users = None
+        active_users = None
+
+    if pd.isna(logged_in_users):
+        logged_in_users = (
+            users_raw.get("month_last_login", pd.Series([], dtype=str)).notna().sum()
+        )
+
+    if pd.isna(active_users):
+        active_users = (
+            users_raw.get("month_last_active", pd.Series([], dtype=str)).notna().sum()
+        )
 
     return dict(
-        total_users=total_users,
-        total_projects=total_projects,
-        total_regs=total_regs,
-        total_preprints=total_preprints,
+        total_users=int(total_users),
+        total_projects=int(total_projects),
+        total_regs=int(total_regs),
+        total_preprints=int(total_preprints),
         total_public_files=int(total_public_files),
         total_storage_gb=round(float(total_storage_gb), 1)
         if pd.notna(total_storage_gb)
         else 0,
-        total_logged_in_users=logged_in_users,
-        total_active_users=active_users,
+        total_logged_in_users=int(logged_in_users or 0),
+        total_active_users=int(active_users or 0),
     )
 
 
@@ -502,16 +531,16 @@ with tabs[0]:
     # Donuts row 2
     cD, cE, cF = st.columns(3)
 
-    # Total OSF Objects donut
+    # Total OSF Objects (exclude users)
     with cD:
         obj_counts = (
             data_objects["object_type"]
+            .loc[data_objects["object_type"].isin(["project", "registration", "preprint"])]
             .map(
                 {
                     "project": "Projects",
                     "registration": "Registrations",
                     "preprint": "Preprints",
-                    "user": "Users",
                 }
             )
             .value_counts()
@@ -522,41 +551,30 @@ with tabs[0]:
             title="Total OSF Objects",
         )
 
-    # Top 10 licenses
-with cE:
-    # Build license series from projects + registrations + preprints only
-    license_series_parts = []
-    for df_ in (projects_raw, regs_raw, preprints_raw):
-        if "license" in df_.columns:
-            license_series_parts.append(df_["license"])
+    # Top 10 licenses (normalized)
+    with cE:
+        license_series_parts = []
+        for df_ in (projects_raw, regs_raw, preprints_raw):
+            if "license" in df_.columns:
+                license_series_parts.append(df_["license"])
 
-    if license_series_parts:
-        s = pd.concat(license_series_parts, ignore_index=True)
+        if license_series_parts:
+            s = pd.concat(license_series_parts, ignore_index=True)
+            s = s.dropna().astype(str)
+            s = s.str.normalize("NFKC").str.strip()
+            s = s.str.replace(r"\s+", " ", regex=True)
+            s = s.str.split("|").explode().str.strip()
+            s = s.replace("", "Unknown")
+            license_counts = s.value_counts().head(10)
+            bar_chart(
+                license_counts.index.tolist(),
+                license_counts.values.tolist(),
+                title="Top 10 Licenses",
+            )
+        else:
+            st.info("No license data available.")
 
-        # 1) Normalize: drop NaNs, make strings, normalize Unicode, trim spaces
-        s = s.dropna().astype(str)
-        s = s.str.normalize("NFKC")           # unify weird Unicode variants
-        s = s.str.strip()
-        s = s.str.replace(r"\s+", " ", regex=True)
-
-        # 2) Split multi-license cells (e.g., "CC BY 4.0|MIT")
-        s = s.str.split("|").explode().str.strip()
-
-        # 3) Replace empty with "Unknown"
-        s = s.replace("", "Unknown")
-
-        license_counts = s.value_counts().head(10)
-
-        bar_chart(
-            license_counts.index.tolist(),
-            license_counts.values.tolist(),
-            title="Top 10 Licenses",
-        )
-    else:
-        st.info("No license data available.")
-
-
-    # Top 10 add-ons (split pipe-separated)
+    # Top 10 add-ons (split)
     with cF:
         if "add_ons" in data_objects.columns:
             addons_series = data_objects["add_ons"].dropna().astype(str)
@@ -573,7 +591,7 @@ with cE:
 
     st.markdown("---")
 
-    # Storage regions donut (projects + registrations)
+    # Storage regions donut (slimmed, ignore Unknown)
     cG, _, _ = st.columns(3)
     with cG:
         regions_parts = []
@@ -584,14 +602,17 @@ with cE:
         if regions_parts:
             regions = (
                 pd.concat(regions_parts, ignore_index=True)
-                .fillna("Unknown")
-                .replace("", "Unknown")
+                .dropna()
+                .astype(str)
+                .str.strip()
             )
-            counts = regions.value_counts().head(10)
+            regions = regions[regions != ""]
+            counts = regions.value_counts().head(8)
             donut_chart(
                 counts.index.tolist(),
                 counts.values.tolist(),
                 title="Top Storage Regions",
+                height=220,
             )
         else:
             st.info("No storage region data available.")
@@ -603,7 +624,6 @@ with cE:
 with tabs[1]:
     st.markdown('<div class="osf-section-title">Users</div>', unsafe_allow_html=True)
 
-    # init customize state
     if "users_show_customize" not in st.session_state:
         st.session_state["users_show_customize"] = False
 
@@ -612,7 +632,6 @@ with tabs[1]:
             "users_show_customize"
         ]
 
-    # toolbar
     ctop1, ctop2, ctop3 = st.columns([4, 1, 1])
     count_placeholder = ctop1.empty()
     with ctop2:
@@ -623,7 +642,7 @@ with tabs[1]:
             use_container_width=True,
         )
 
-    # filters (simple: department + ORCID)
+    # Filters: department + ORCID presence
     st.markdown("##### Filters")
     ucol1, ucol2 = st.columns([2, 1])
 
@@ -699,14 +718,29 @@ with tabs[1]:
             }
         )
 
-        all_cols = list(display.columns)
-        all_existing = all_cols
+        allowed_cols = [
+            "Name",
+            "Department",
+            "ORCID iD",
+            "Public projects",
+            "Private projects",
+            "Public registrations",
+            "Embargoed registrations",
+            "Published preprints",
+            "Public files",
+            "Total data stored on OSF (GB)",
+            "Last active (YYYY-MM)",
+            "Last login (YYYY-MM)",
+            "Report month (YYYY-MM)",
+        ]
+        existing = [c for c in allowed_cols if c in display.columns]
+        display = display[existing]
 
         if st.session_state["users_show_customize"]:
             with ctop2:
-                customize_columns_box(all_existing, "users")
+                customize_columns_box(existing, "users")
 
-        selected_cols = get_saved_columns(all_existing, "users")
+        selected_cols = get_saved_columns(existing, "users")
         display = display[selected_cols]
 
         csv_bytes = display.to_csv(index=False).encode("utf-8")
@@ -912,7 +946,6 @@ with tabs[2]:
 
         projects = projects[projects["contributor_name"].apply(has_all_creators)]
 
-    # date year
     if "projects_year_filter" in st.session_state and "created_date" in projects.columns:
         year_choice = st.session_state.get("projects_year_filter")
         if year_choice and year_choice != "All years":
@@ -933,7 +966,6 @@ with tabs[2]:
         projects = projects[projects["resource_type"].isin(resource_types_selected)]
 
     if addons_selected and "add_ons" in projects.columns:
-        # Simple contains-any logic
         def has_any_addon(val: str) -> bool:
             text = str(val) if pd.notna(val) else ""
             return any(a in text for a in addons_selected)
@@ -965,14 +997,29 @@ with tabs[2]:
                 }
             )
 
-            all_cols = list(display.columns)
-            all_existing = all_cols
+            allowed_cols = [
+                "Title",
+                "OSF Link",
+                "Created date",
+                "Modified date",
+                "DOI",
+                "Storage region",
+                "Total data stored on OSF (GB)",
+                "Creator(s)",
+                "Views (last 30 days)",
+                "Resource type",
+                "License",
+                "Add-ons",
+                "Funder name",
+            ]
+            existing = [c for c in allowed_cols if c in display.columns]
+            display = display[existing]
 
             if st.session_state["projects_show_customize"]:
                 with top_customize:
-                    customize_columns_box(all_existing, "projects")
+                    customize_columns_box(existing, "projects")
 
-            selected_cols = get_saved_columns(all_existing, "projects")
+            selected_cols = get_saved_columns(existing, "projects")
             display = display[selected_cols]
 
             csv_bytes = display.to_csv(index=False).encode("utf-8")
@@ -1183,14 +1230,28 @@ with tabs[3]:
                 }
             )
 
-            all_cols = list(display.columns)
-            all_existing = all_cols
+            allowed_cols = [
+                "Title",
+                "OSF Link",
+                "Created date",
+                "Modified date",
+                "DOI",
+                "Storage region",
+                "Total data stored on OSF (GB)",
+                "Creator(s)",
+                "Views (last 30 days)",
+                "Resource type",
+                "License",
+                "Funder name",
+            ]
+            existing = [c for c in allowed_cols if c in display.columns]
+            display = display[existing]
 
             if st.session_state["regs_show_customize"]:
                 with top_customize:
-                    customize_columns_box(all_existing, "regs")
+                    customize_columns_box(existing, "regs")
 
-            selected_cols = get_saved_columns(all_existing, "regs")
+            selected_cols = get_saved_columns(existing, "regs")
             display = display[selected_cols]
 
             csv_bytes = display.to_csv(index=False).encode("utf-8")
@@ -1358,14 +1419,25 @@ with tabs[4]:
                 }
             )
 
-            all_cols = list(display.columns)
-            all_existing = all_cols
+            allowed_cols = [
+                "Title",
+                "OSF Link",
+                "Created date",
+                "Modified date",
+                "DOI",
+                "Creator(s)",
+                "Views (last 30 days)",
+                "Downloads (last 30 days)",
+                "License",
+            ]
+            existing = [c for c in allowed_cols if c in display.columns]
+            display = display[existing]
 
             if st.session_state["preprints_show_customize"]:
                 with top_customize:
-                    customize_columns_box(all_existing, "preprints")
+                    customize_columns_box(existing, "preprints")
 
-            selected_cols = get_saved_columns(all_existing, "preprints")
+            selected_cols = get_saved_columns(existing, "preprints")
             display = display[selected_cols]
 
             csv_bytes = display.to_csv(index=False).encode("utf-8")
