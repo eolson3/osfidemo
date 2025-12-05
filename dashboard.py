@@ -15,20 +15,19 @@ st.set_page_config(
     page_title="OSF Institutions Demo Dashboard",
     page_icon="📊",
     layout="wide",
+    initial_sidebar_state="collapsed",
 )
 
 INSTITUTION_NAME = "Center For Open Science [Test]"
 # You can swap this for a different logo URL or a local static image
-INSTITUTION_LOGO_URL = (
-    "https://osf.io/static/img/cos-white.svg"
-)
+INSTITUTION_LOGO_URL = "https://osf.io/static/img/cos-white.svg"
 
 st.markdown(
     """
     <style>
     body { background-color: #f4f5f7; }
     .main { background-color: #f4f5f7; }
-    .block-container { padding-top: 0.5rem; }
+    .block-container { padding-top: 0rem; }
 
     .osf-header {
         display: flex;
@@ -37,8 +36,9 @@ st.markdown(
         padding: 0.75rem 1.0rem;
         background: #023c52;
         color: #ffffff;
-        border-radius: 0 0 8px 8px;
-        margin-bottom: 0.5rem;
+        border-radius: 0;
+        margin: 0 0 0.5rem 0;
+        border-bottom: 1px solid #0b4f68;
     }
     .osf-header-left {
         display: flex;
@@ -76,40 +76,20 @@ st.markdown(
         color: #ffffff;
     }
 
-    /* Top nav styling */
     .osf-nav {
         display: flex;
         gap: 0.5rem;
-        padding: 0.5rem 0.25rem 0.75rem 0.25rem;
+        padding: 0.5rem 1.0rem 0.75rem 1.0rem;
         border-bottom: 1px solid #e5e7eb;
         margin-bottom: 0.5rem;
-    }
-    .osf-nav-tab {
-        padding: 0.35rem 0.9rem;
-        border-radius: 999px;
-        font-size: 0.9rem;
-        font-weight: 500;
-        cursor: pointer;
-        border: 1px solid transparent;
-        color: #374151;
-        background-color: transparent;
-    }
-    .osf-nav-tab-active {
-        background-color: #ffffff;
-        border-color: #d1d5db;
-        color: #111827;
+        background-color: #f9fafb;
     }
 
-    [data-testid="stSidebar"] {
-        background-color: #111827;
-        color: #e5e7eb;
-    }
-    [data-testid="stSidebar"] h1,
-    [data-testid="stSidebar"] h2,
-    [data-testid="stSidebar"] h3,
-    [data-testid="stSidebar"] label,
-    [data-testid="stSidebar"] p {
-        color: #e5e7eb;
+    /* Hide sidebar completely */
+    [data-testid="stSidebar"],
+    [data-testid="stSidebarNav"],
+    [data-testid="collapsedControl"] {
+        display: none !important;
     }
     </style>
     """,
@@ -246,18 +226,6 @@ def compute_summary_metrics(users_df, projects_df, regs_df, preprints_df):
 
 
 # =====================================================
-# SIDEBAR (minimal)
-# =====================================================
-
-with st.sidebar:
-    st.markdown("### 📊 OSF Institutions (Demo)")
-    st.caption(
-        "Demo using CSV exports from an OSF Institutions dashboard. "
-        "Not connected to the live OSF API."
-    )
-
-
-# =====================================================
 # HEADER + TOP NAV
 # =====================================================
 
@@ -292,37 +260,21 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# page state
 if "page" not in st.session_state:
     st.session_state["page"] = "Summary"
 
-
-def render_top_nav():
-    tabs = ["Summary", "Users", "Projects", "Registrations", "Preprints"]
-    active = st.session_state["page"]
-
-    # Build HTML nav bar
-    html = ['<div class="osf-nav">']
-    for t in tabs:
-        cls = "osf-nav-tab"
-        if t == active:
-            cls += " osf-nav-tab-active"
-        html.append(f'<button class="{cls}" type="button">{t}</button>')
-    html.append("</div>")
-
-    # Use radio for actual interaction (hidden label), styled by CSS nav-ish
-    col = st.columns(len(tabs))
-    # simpler: streamlit's horizontal radio
+with st.container():
+    st.markdown('<div class="osf-nav"></div>', unsafe_allow_html=True)
     st.session_state["page"] = st.radio(
         label="",
-        options=tabs,
-        index=tabs.index(active),
+        options=["Summary", "Users", "Projects", "Registrations", "Preprints"],
+        index=["Summary", "Users", "Projects", "Registrations", "Preprints"].index(
+            st.session_state["page"]
+        ),
         horizontal=True,
         key="top_nav_radio",
     )
 
-
-render_top_nav()
 page = st.session_state["page"]
 
 
@@ -337,7 +289,6 @@ if page == "Summary":
         users_raw, projects_raw, regs_raw, preprints_raw
     )
 
-    # ----- Metric cards -----
     r1c1, r1c2, r1c3, r1c4 = st.columns(4)
     r2c1, r2c2, r2c3, r2c4 = st.columns(4)
 
@@ -387,7 +338,6 @@ if page == "Summary":
         st.markdown(f"**{title}**")
         st.bar_chart(series)
 
-    # ---------- Row A ----------
     a1, a2, a3 = st.columns(3)
 
     with a1:
@@ -426,7 +376,6 @@ if page == "Summary":
             reg_values = reg_vis.values.tolist()
         donut_chart(reg_labels, reg_values, title="Public vs Embargoed Registrations")
 
-    # ---------- Row B ----------
     b1, b2, b3 = st.columns(3)
 
     with b1:
@@ -469,6 +418,7 @@ if page == "Summary":
                         df_addons.set_index("addon")["count"].astype(int)
                     )
         except Exception:
+        # pragma: no cover
             addons_counts = None
 
         if addons_counts is None:
@@ -483,7 +433,6 @@ if page == "Summary":
 
         bar_chart_from_series(addons_counts, "Top 10 Add-ons")
 
-    # ---------- Row C ----------
     c1, _, _ = st.columns([1.2, 1, 1])
 
     with c1:
@@ -515,15 +464,9 @@ elif page == "Users":
     st.subheader("Users")
 
     st.markdown("##### Filters (Users tab)")
-    ucol1, ucol2, ucol3 = st.columns([2, 2, 1])
+    ucol1, ucol2 = st.columns([2, 1])
 
     with ucol1:
-        users_search = st.text_input(
-            "Search users (name contains)",
-            value="",
-            key="users_search",
-        ).strip()
-    with ucol2:
         dept_options = (
             sorted(users_raw["department"].dropna().unique().tolist())
             if "department" in users_raw.columns
@@ -538,7 +481,7 @@ elif page == "Users":
             )
         else:
             users_depts = []
-    with ucol3:
+    with ucol2:
         if "orcid_id" in users_raw.columns:
             users_orcid = st.selectbox(
                 "ORCID",
@@ -563,12 +506,6 @@ elif page == "Users":
                 users["orcid_id"].isna()
                 | (users["orcid_id"].astype(str).str.strip() == "")
             ]
-    if users_search:
-        users = users[
-            users["user_name"]
-            .astype(str)
-            .str.contains(users_search, case=False, na=False)
-        ]
 
     metrics_users = compute_summary_metrics(
         users, projects_raw, regs_raw, preprints_raw
@@ -627,24 +564,22 @@ elif page == "Users":
 
 
 # =====================================================
-# PROJECTS TAB (drawer filters, AND creators)
+# PROJECTS TAB
 # =====================================================
 
 elif page == "Projects":
     st.subheader("Projects")
 
     if "projects_show_filters" not in st.session_state:
-        st.session_state["projects_show_filters"] = True
+        st.session_state["projects_show_filters"] = False
 
     def toggle_projects_filters():
         st.session_state["projects_show_filters"] = not st.session_state[
             "projects_show_filters"
         ]
 
-    top_left, top_filters, top_customize = st.columns([6, 1, 1])
-
-    with top_left:
-        st.markdown(f"**{len(projects_raw):,} Total Projects**")
+    top_left_col, top_filters, top_customize = st.columns([6, 1, 1])
+    projects_count_placeholder = top_left_col.empty()
 
     with top_filters:
         st.button("Filters", on_click=toggle_projects_filters, use_container_width=True)
@@ -757,12 +692,12 @@ elif page == "Projects":
         years = pd.to_datetime(projects["dateCreated"], errors="coerce").dt.year
         projects = projects[years == year_selected]
 
+    projects_count_placeholder.markdown(f"**{len(projects):,} Total Projects**")
+
     with main_col:
         if projects.empty:
             st.info("No projects match the current filters.")
         else:
-            st.markdown(f"**{len(projects):,} Total Projects**")
-
             df = projects.copy()
             if "storageByteCount" in df.columns:
                 df["Total data stored on OSF (GB)"] = df["storageByteCount"] / 1e9
@@ -818,24 +753,22 @@ elif page == "Projects":
 
 
 # =====================================================
-# REGISTRATIONS TAB (drawer filters, AND creators)
+# REGISTRATIONS TAB
 # =====================================================
 
 elif page == "Registrations":
     st.subheader("Registrations")
 
     if "regs_show_filters" not in st.session_state:
-        st.session_state["regs_show_filters"] = True
+        st.session_state["regs_show_filters"] = False
 
     def toggle_regs_filters():
         st.session_state["regs_show_filters"] = not st.session_state[
             "regs_show_filters"
         ]
 
-    top_left, top_filters, top_customize = st.columns([6, 1, 1])
-
-    with top_left:
-        st.markdown(f"**{len(regs_raw):,} Total Registrations**")
+    top_left_col, top_filters, top_customize = st.columns([6, 1, 1])
+    regs_count_placeholder = top_left_col.empty()
 
     with top_filters:
         st.button("Filters", on_click=toggle_regs_filters, use_container_width=True)
@@ -964,12 +897,12 @@ elif page == "Registrations":
         years = pd.to_datetime(regs["dateCreated"], errors="coerce").dt.year
         regs = regs[years == year_selected]
 
+    regs_count_placeholder.markdown(f"**{len(regs):,} Total Registrations**")
+
     with main_col:
         if regs.empty:
             st.info("No registrations match the current filters.")
         else:
-            st.markdown(f"**{len(regs):,} Total Registrations**")
-
             df = regs.copy()
             if "storageByteCount" in df.columns:
                 df["Total data stored on OSF (GB)"] = df["storageByteCount"] / 1e9
@@ -1025,24 +958,22 @@ elif page == "Registrations":
 
 
 # =====================================================
-# PREPRINTS TAB (drawer filters, AND creators)
+# PREPRINTS TAB
 # =====================================================
 
 elif page == "Preprints":
     st.subheader("Preprints")
 
     if "preprints_show_filters" not in st.session_state:
-        st.session_state["preprints_show_filters"] = True
+        st.session_state["preprints_show_filters"] = False
 
     def toggle_preprints_filters():
         st.session_state["preprints_show_filters"] = not st.session_state[
             "preprints_show_filters"
         ]
 
-    top_left, top_filters, top_customize = st.columns([6, 1, 1])
-
-    with top_left:
-        st.markdown(f"**{len(preprints_raw):,} Total Preprints**")
+    top_left_col, top_filters, top_customize = st.columns([6, 1, 1])
+    preprints_count_placeholder = top_left_col.empty()
 
     with top_filters:
         st.button("Filters", on_click=toggle_preprints_filters, use_container_width=True)
@@ -1159,12 +1090,12 @@ elif page == "Preprints":
         years = pd.to_datetime(preprints["dateCreated"], errors="coerce").dt.year
         preprints = preprints[years == year_selected]
 
+    preprints_count_placeholder.markdown(f"**{len(preprints):,} Total Preprints**")
+
     with main_col:
         if preprints.empty:
             st.info("No preprints match the current filters.")
         else:
-            st.markdown(f"**{len(preprints):,} Total Preprints**")
-
             df = preprints.copy()
             display = df.rename(
                 columns={
@@ -1193,13 +1124,8 @@ elif page == "Preprints":
             ]
             existing = [c for c in cols if c in display.columns]
 
-            mcol1, mcol2 = st.columns(2)
-            mcol1.metric("Preprints (rows)", fmt(len(display)))
-            if "Views (last 30 days)" in display.columns:
-                mcol2.metric(
-                    "Avg. views (30 days)",
-                    fmt(display["Views (last 30 days)"].mean(), fmt_str="{:,.1f}"),
-                )
+            # Just keep the row count metric; no average views
+            st.metric("Preprints (rows)", fmt(len(display)))
 
             st.markdown("#### Preprint metrics (one row per preprint)")
             st.dataframe(
