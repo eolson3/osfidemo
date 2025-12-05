@@ -29,140 +29,138 @@ OSF_COLORS = {
     "metric_bg": "#F3F7FD",
 }
 
-
 def inject_osf_css() -> None:
     """Inject global CSS so the app looks closer to the OSF dashboards."""
     st.markdown(
-        f"""
+        """
         <style>
-        html, body, [data-testid="stAppViewContainer"] > .main {{
-            background-color: {OSF_COLORS["body_bg"]};
-        }}
+        /* Overall background */
+        .stApp, .stAppViewContainer, .block-container {
+            background-color: #F5F7FB;
+        }
 
         /* Reduce top padding a bit */
-        [data-testid="stAppViewContainer"] > .main > div:first-child {{
-            padding-top: 0.75rem;
-        }}
-
-        /* Hide Streamlit default title */
-        .block-container > h1:first-child {{
-            display: none;
-        }}
+        .block-container {
+            padding-top: 0.75rem !important;
+        }
 
         /* Header bar */
-        .osf-header {{
-            background: {OSF_COLORS["light_blue"]};
-            border-bottom: 1px solid {OSF_COLORS["border"]};
+        .osf-header {
+            background: #E8F1FB;
+            border-bottom: 1px solid #E2E8F0;
             padding: 0.75rem 1.5rem;
-        }}
+        }
 
-        .osf-header-title {{
+        .osf-header-title {
             font-size: 1.4rem;
             font-weight: 700;
-            color: {OSF_COLORS["navy"]};
+            color: #092A47;
             margin-bottom: 0.15rem;
-        }}
+        }
 
-        .osf-header-subtitle {{
+        .osf-header-subtitle {
             font-size: 0.9rem;
             color: #3B4A5A;
-        }}
+        }
 
         /* Tabs (Summary / Users / Projects / ...) */
-        div[data-baseweb="tab-list"] {{
-            gap: 1.5rem;
+        .stTabs [role="tablist"] {
+            border-bottom: 1px solid #E2E8F0;
             padding-left: 1.5rem;
-        }}
+            gap: 1.5rem;
+        }
 
-        button[data-baseweb="tab"] {{
+        .stTabs [role="tab"] {
             font-weight: 600;
             font-size: 0.95rem;
-            color: {OSF_COLORS["navy"]};
+            color: #092A47;
             background: transparent;
-        }}
-
-        button[data-baseweb="tab"][aria-selected="true"] {{
+            padding: 0.6rem 0.2rem;
             border-radius: 0;
-            border-bottom: 3px solid {OSF_COLORS["accent"]};
-        }}
+            border: none;
+        }
+
+        .stTabs [role="tab"][aria-selected="true"] {
+            border-bottom: 3px solid #FF4B4B;
+        }
 
         /* Metric cards on Summary */
-        [data-testid="stMetric"] {{
-            background-color: white;
+        [data-testid="stMetric"] {
+            background-color: #FFFFFF;
             border-radius: 18px;
             padding: 1.5rem 1.75rem;
-            border: 1px solid {OSF_COLORS["border"]};
-        }}
+            border: 1px solid #E2E8F0;
+        }
 
-        [data-testid="stMetric"] > div > div:nth-child(1) {{
+        [data-testid="stMetric"] > div > div:nth-child(1) {
             color: #4A5568;
             font-size: 0.85rem;
             font-weight: 500;
-        }}
+        }
 
-        [data-testid="stMetric"] > div > div:nth-child(2) {{
-            color: {OSF_COLORS["navy"]};
+        [data-testid="stMetric"] > div > div:nth-child(2) {
+            color: #092A47;
             font-size: 1.6rem;
             font-weight: 700;
-        }}
+        }
 
-        /* Generic card for charts */
-        .osf-card {{
-            background: white;
+        /* Generic “card” container used around charts */
+        .osf-card {
+            background: #FFFFFF;
             border-radius: 18px;
-            border: 1px solid {OSF_COLORS["border"]};
+            border: 1px solid #E2E8F0;
             padding: 1rem 1.25rem 1.25rem 1.25rem;
-        }}
+        }
 
-        .osf-card-title {{
+        .osf-card-title {
             font-weight: 600;
             font-size: 0.95rem;
-            color: {OSF_COLORS["navy"]};
+            color: #092A47;
             margin-top: 0.25rem;
-        }}
+        }
 
-        /* Top-right button row (Filters / Customize / Download) */
-        .osf-top-buttons .stButton > button {{
+        /* Filters / Customize / Download buttons row */
+        .osf-top-buttons .stButton > button {
             border-radius: 999px;
-            border: 1px solid {OSF_COLORS["border"]};
+            border: 1px solid #E2E8F0;
             background-color: #FFFFFF;
-            color: {OSF_COLORS["navy"]};
+            color: #092A47;
             font-weight: 600;
             padding: 0.35rem 1.4rem;
             font-size: 0.9rem;
-        }}
+        }
 
-        .osf-top-buttons .stButton > button:hover {{
-            border-color: {OSF_COLORS["navy"]};
-        }}
+        .osf-top-buttons .stButton > button:hover {
+            border-color: #092A47;
+        }
 
         /* Data tables */
-        [data-testid="stDataFrame"] {{
+        [data-testid="stDataFrame"] {
             border-radius: 10px;
-            border: 1px solid {OSF_COLORS["border"]};
-        }}
+            border: 1px solid #E2E8F0;
+        }
 
         /* Pagination controls */
-        .osf-pager {{
+        .osf-pager {
             text-align: right;
             margin-top: 0.4rem;
             margin-bottom: 0.4rem;
-        }}
+        }
 
-        .osf-pager button {{
+        .osf-pager button {
             border-radius: 999px;
-            border: 1px solid {OSF_COLORS["border"]};
-            background-color: white;
+            border: 1px solid #E2E8F0;
+            background-color: #FFFFFF;
             padding: 0.15rem 0.6rem;
             margin-left: 0.25rem;
             font-size: 0.8rem;
-        }}
+        }
 
-        .osf-table-count {{
+        .osf-table-count {
             font-size: 0.9rem;
             color: #4A5568;
             margin-bottom: 0.2rem;
-        }}
+        }
         </style>
         """,
         unsafe_allow_html=True,
