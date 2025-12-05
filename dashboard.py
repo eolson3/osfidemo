@@ -24,7 +24,7 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
     """
     Load unified CSV.
 
-    Expects a column that normalizes to 'row_type' with values like:
+    Expects a first column that is or should be 'row_type' with values like:
       - summary
       - user
       - project
@@ -32,37 +32,43 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
       - preprint
     Branding can be in a separate 'branding' row OR folded into the summary row.
     """
-    # Read as strings; let pandas sniff the delimiter just in case
+    # Read as strings; let pandas sniff the delimiter (handles comma, tab, etc.)
     df = pd.read_csv(path, dtype=str, sep=None, engine="python")
 
-    # Keep originals for debugging
+    # Keep originals for debugging if needed
     original_cols = list(df.columns)
 
-    # Normalize column names: strip, remove BOM, lower-case
-    normalized_cols = []
+    # Normalize column names: strip spaces and BOM
+    cleaned_cols = []
     for c in df.columns:
-        # remove BOM if present
         c_clean = c.replace("\ufeff", "").strip()
-        normalized_cols.append(c_clean)
-    df.columns = normalized_cols
+        cleaned_cols.append(c_clean)
+    df.columns = cleaned_cols
 
-    # Find the row_type-like column
+    # Try to find an explicit row_type column
     row_type_col = None
     for col in df.columns:
         if col.strip().lower() == "row_type":
             row_type_col = col
             break
 
+    # If still nothing, FORCE the first column to be row_type
+    if row_type_col is None and len(df.columns) > 0:
+        first_col = df.columns[0]
+        df = df.rename(columns={first_col: "row_type"})
+        row_type_col = "row_type"
+
+    # If we STILL don't have anything, hard fail with debug info
     if row_type_col is None:
         st.error(
             "CSV must include a 'row_type' column "
             "(values like summary/user/project/registration/preprint, and optionally branding).\n\n"
-            f"Raw columns seen: {original_cols}\n"
+            f"Raw columns: {original_cols}\n"
             f"Normalized columns: {df.columns.tolist()}"
         )
         st.stop()
 
-    # Ensure we have a 'row_type' column internally
+    # Ensure internal 'row_type' exists
     if row_type_col != "row_type":
         df["row_type"] = df[row_type_col]
 
@@ -77,9 +83,6 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
     preprints = df[df["row_type"] == "preprint"].copy()
 
     # ---- branding_row logic ----
-    # 1) If there's an explicit branding row, use its first row
-    # 2) Else, if there's a summary row, use THAT as branding
-    # 3) Else, fall back to empty series
     if not branding_df.empty:
         branding_row = branding_df.iloc[0]
     elif not summary_df.empty:
@@ -88,9 +91,6 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
         branding_row = pd.Series(dtype=object)
 
     # ---- summary_row logic ----
-    # 1) If there's a summary row, use its first row
-    # 2) Else, if there's a branding row, use that as summary
-    # 3) Else, fall back to empty series
     if not summary_df.empty:
         summary_row = summary_df.iloc[0]
     elif not branding_df.empty:
