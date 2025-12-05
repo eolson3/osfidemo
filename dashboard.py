@@ -1,99 +1,29 @@
 import math
+from pathlib import Path
+
 import pandas as pd
-import streamlit as st
 import plotly.graph_objects as go
+import streamlit as st
 
-DATA_FILE = "osfi_dashboard_data_with_summary_and_branding.csv"
+# ---------------------------------------------------
+# CONFIG
+# ---------------------------------------------------
 
-# -----------------------------------
-# Data loading
-# -----------------------------------
-
-@st.cache_data
-def load_data(path: str) -> pd.DataFrame:
-    df = pd.read_csv(path, dtype=str)
-    # Convert numeric-ish columns to proper dtypes where helpful
-    for col in [
-        "storage_byte_count",
-        "storage_gb",
-        "views_last_30_days",
-        "downloads_last_30_days",
-        "public_projects",
-        "private_projects",
-        "public_registration_count",
-        "embargoed_registration_count",
-        "published_preprint_count",
-        "public_file_count",
-        "projects_public_count",
-        "projects_private_count",
-        "registrations_public_count",
-        "registrations_embargoed_count",
-    ]:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors="coerce")
-    return df
-
-
-data = load_data(DATA_FILE)
-
-# Split summary row from object rows
-summary_row = data[data["object_type"] == "summary"]
-if not summary_row.empty:
-    summary_meta = summary_row.iloc[0]
-else:
-    summary_meta = pd.Series(dtype=object)
-
-data_objects = data[data["object_type"] != "summary"].copy()
-
-users_raw = data_objects[data_objects["object_type"] == "user"].copy()
-projects_raw = data_objects[data_objects["object_type"] == "project"].copy()
-regs_raw = data_objects[data_objects["object_type"] == "registration"].copy()
-preprints_raw = data_objects[data_objects["object_type"] == "preprint"].copy()
-
-# -----------------------------------
-# Branding / header
-# -----------------------------------
-
-if not summary_meta.empty:
-    INSTITUTION_NAME = str(
-        summary_meta.get("branding_institution_name", "OSF Institution [Demo]")
-    )
-    INSTITUTION_LOGO_URL = str(
-        summary_meta.get("branding_institution_logo_url", "")
-    ).strip()
-    REPORT_MONTH_LABEL = str(summary_meta.get("report_month", "")).strip()
-else:
-    INSTITUTION_NAME = "OSF Institution [Demo]"
-    INSTITUTION_LOGO_URL = "https://osf.io/static/img/cos-white.svg"
-    REPORT_MONTH_LABEL = ""
-
-# Fallback: if no report_month in summary, use first from user rows
-if not REPORT_MONTH_LABEL:
-    rm = (
-        users_raw.get("report_yearmonth", pd.Series([], dtype=str))
-        .dropna()
-        .astype(str)
-    )
-    rm = rm[rm != ""]
-    if not rm.empty:
-        REPORT_MONTH_LABEL = rm.iloc[0]
-
-# -----------------------------------
-# Helper styling
-# -----------------------------------
+DATA_FILE = Path(__file__).parent / "osfi_dashboard_data_with_summary_and_branding.csv"
 
 st.set_page_config(
     page_title="OSF Institutions Dashboard (Demo)",
     layout="wide",
 )
 
+# ---------------------------------------------------
+# STYLING
+# ---------------------------------------------------
+
 st.markdown(
     """
     <style>
-    body {
-        margin: 0;
-        padding: 0;
-    }
+    body { margin: 0; padding: 0; }
     .osf-header-bar {
         background-color: #12364a;
         padding: 18px 32px;
@@ -151,15 +81,18 @@ st.markdown(
         font-weight: 700;
         color: #111827;
     }
-    .osf-toolbar {
-        display: flex;
-        justify-content: flex-end;
-        align-items: center;
-        gap: 8px;
-        margin-bottom: 12px;
+    .customize-box {
+        background-color: #ffffff;
+        border: 1px solid #d0d4da;
+        border-radius: 8px;
+        padding: 0.4rem 0.5rem 0.25rem 0.5rem;
+        margin-top: 0.35rem;
+        max-width: 260px;
+        box-shadow: 0 2px 6px rgba(15, 23, 42, 0.15);
     }
-    .osf-toolbar button {
-        border-radius: 999px !important;
+    .customize-box label {
+        font-size: 0.85rem;
+        padding: 0.1rem 0;
     }
     .osf-pagination {
         display: flex;
@@ -177,7 +110,82 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# Header bar
+# ---------------------------------------------------
+# DATA LOADING
+# ---------------------------------------------------
+
+@st.cache_data
+def load_data(path: Path) -> pd.DataFrame:
+    df = pd.read_csv(path, dtype=str)
+
+    # numeric-ish columns
+    numeric_cols = [
+        "storage_byte_count",
+        "storage_gb",
+        "views_last_30_days",
+        "downloads_last_30_days",
+        "public_projects",
+        "private_projects",
+        "public_registration_count",
+        "embargoed_registration_count",
+        "published_preprint_count",
+        "public_file_count",
+        "projects_public_count",
+        "projects_private_count",
+        "registrations_public_count",
+        "registrations_embargoed_count",
+    ]
+    for col in numeric_cols:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    return df
+
+
+data = load_data(DATA_FILE)
+
+summary_row = data[data["object_type"] == "summary"]
+if not summary_row.empty:
+    summary_meta = summary_row.iloc[0]
+else:
+    summary_meta = pd.Series(dtype=object)
+
+data_objects = data[data["object_type"] != "summary"].copy()
+
+users_raw = data_objects[data_objects["object_type"] == "user"].copy()
+projects_raw = data_objects[data_objects["object_type"] == "project"].copy()
+regs_raw = data_objects[data_objects["object_type"] == "registration"].copy()
+preprints_raw = data_objects[data_objects["object_type"] == "preprint"].copy()
+
+# ---------------------------------------------------
+# BRANDING / HEADER
+# ---------------------------------------------------
+
+if not summary_meta.empty:
+    INSTITUTION_NAME = str(
+        summary_meta.get("branding_institution_name", "OSF Institution [Demo]")
+    )
+    INSTITUTION_LOGO_URL = str(
+        summary_meta.get("branding_institution_logo_url", "")
+    ).strip()
+    REPORT_MONTH_LABEL = str(summary_meta.get("report_month", "")).strip()
+else:
+    INSTITUTION_NAME = "OSF Institution [Demo]"
+    INSTITUTION_LOGO_URL = ""
+    REPORT_MONTH_LABEL = ""
+
+# fallback to report_yearmonth from users
+if not REPORT_MONTH_LABEL and "report_yearmonth" in users_raw.columns:
+    rm = (
+        users_raw["report_yearmonth"]
+        .dropna()
+        .astype(str)
+        .str.strip()
+    )
+    rm = rm[rm != ""]
+    if not rm.empty:
+        REPORT_MONTH_LABEL = rm.iloc[0]
+
 st.markdown('<div class="osf-header-bar">', unsafe_allow_html=True)
 col_logo, col_text = st.columns([0.7, 5], gap="small")
 
@@ -207,9 +215,9 @@ with col_text:
 
 st.markdown("</div>", unsafe_allow_html=True)
 
-# -----------------------------------
-# Utility helpers
-# -----------------------------------
+# ---------------------------------------------------
+# HELPERS
+# ---------------------------------------------------
 
 def donut_chart(labels, values, title=None):
     if not labels or not values:
@@ -282,36 +290,54 @@ def render_pagination_controls(total_pages, current_page, key_prefix):
     return current_page
 
 
-def hyperlinkify(df: pd.DataFrame) -> pd.DataFrame:
-    """Make URL-like fields clickable using markdown links."""
-    df = df.copy()
-
-    def make_link(text, url):
-        if not isinstance(url, str) or url.strip() == "":
-            return text
-        if not isinstance(text, str) or text.strip() == "":
-            text = url
-        return f"[{text}]({url})"
-
-    # osf_link already URL; linkify name_or_title if osf_link present
-    if "osf_link" in df.columns and "name_or_title" in df.columns:
-        df["name_or_title"] = [
-            make_link(t, u) for t, u in zip(df["name_or_title"], df["osf_link"])
-        ]
-
-    # doi is URL-ish; linkify using itself
-    if "doi" in df.columns:
-        df["doi"] = [
-            make_link(d, d) if isinstance(d, str) and d.startswith("http") else d
-            for d in df["doi"]
-        ]
-
-    return df
+def build_link_column_config(df: pd.DataFrame):
+    """Treat URL-ish columns as clickable links."""
+    cfg = {}
+    for col in df.columns:
+        lower = col.lower()
+        # header-based hint
+        is_link_col = "link" in lower or "url" in lower
+        # value-based hint
+        if not is_link_col:
+            sample = df[col].dropna().astype(str).head(20)
+            if not sample.empty and (sample.str.startswith("http").mean() > 0.6):
+                is_link_col = True
+        if is_link_col:
+            cfg[col] = st.column_config.LinkColumn(col)
+    return cfg
 
 
-# -----------------------------------
-# Summary metrics (for top tiles)
-# -----------------------------------
+def customize_columns_box(all_existing, prefix: str):
+    state_key = f"{prefix}_cols_state"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = {c: True for c in all_existing}
+    state = st.session_state[state_key]
+
+    st.markdown('<div class="customize-box">', unsafe_allow_html=True)
+    search = st.text_input("Show columns", key=f"{prefix}_col_search")
+    search_lower = search.lower().strip()
+    filtered = [c for c in all_existing if search_lower in c.lower()]
+
+    for col in filtered:
+        checked = st.checkbox(
+            col,
+            value=state.get(col, True),
+            key=f"{prefix}_col_{col}",
+        )
+        state[col] = checked
+
+    st.markdown("</div>", unsafe_allow_html=True)
+    st.session_state[state_key] = state
+
+
+def get_saved_columns(all_existing, prefix: str):
+    state_key = f"{prefix}_cols_state"
+    if state_key not in st.session_state:
+        return all_existing
+    state = st.session_state[state_key]
+    selected_cols = [c for c in all_existing if state.get(c, True)]
+    return selected_cols or all_existing
+
 
 def compute_summary_metrics():
     total_users = len(users_raw)
@@ -350,21 +376,20 @@ def compute_summary_metrics():
 
 summary_metrics = compute_summary_metrics()
 
-# -----------------------------------
-# Tabs
-# -----------------------------------
+# ---------------------------------------------------
+# TABS
+# ---------------------------------------------------
 
 st.markdown('<div class="osf-tab-strip"></div>', unsafe_allow_html=True)
+tabs = st.tabs(["Summary", "Users", "Projects", "Registrations", "Preprints"])
 
-tab_labels = ["Summary", "Users", "Projects", "Registrations", "Preprints"]
-current_tab = st.tabs(tab_labels)
+# ---------------------------------------------------
+# SUMMARY TAB
+# ---------------------------------------------------
 
-# ------------ SUMMARY TAB ------------
-
-with current_tab[0]:
+with tabs[0]:
     st.markdown('<div class="osf-section-title">Summary</div>', unsafe_allow_html=True)
 
-    # Top metric tiles
     m = summary_metrics
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -412,10 +437,10 @@ with current_tab[0]:
 
     st.markdown("---")
 
-    # Second row of donuts (users by dept; public/private projects; public/embargoed regs)
+    # Donuts row 1
     cA, cB, cC = st.columns(3)
 
-    # Total Users by Department
+    # Users by department
     with cA:
         if "department" in users_raw.columns:
             dept_counts = (
@@ -432,61 +457,52 @@ with current_tab[0]:
         else:
             st.info("No department data available.")
 
-    # Public vs Private Projects (summary counts)
+    # Public vs Private projects from summary row
     with cB:
         labels, values = [], []
         if not summary_meta.empty:
-            pub = pd.to_numeric(
-                summary_meta.get("projects_public_count"), errors="coerce"
-            )
-            priv = pd.to_numeric(
-                summary_meta.get("projects_private_count"), errors="coerce"
-            )
+            pub = summary_meta.get("projects_public_count")
+            priv = summary_meta.get("projects_private_count")
             if pd.notna(pub) and pub > 0:
                 labels.append("Public")
                 values.append(int(pub))
             if pd.notna(priv) and priv > 0:
                 labels.append("Private")
                 values.append(int(priv))
-
         if values:
             donut_chart(labels, values, title="Public vs Private Projects")
         else:
             st.info(
-                "No public/private project counts provided yet. "
+                "No public/private project counts yet. "
                 "Edit the summary row in the CSV to add them."
             )
 
-    # Public vs Embargoed Registrations (summary counts)
+    # Public vs Embargoed registrations from summary row
     with cC:
         labels, values = [], []
         if not summary_meta.empty:
-            pub = pd.to_numeric(
-                summary_meta.get("registrations_public_count"), errors="coerce"
-            )
-            emb = pd.to_numeric(
-                summary_meta.get("registrations_embargoed_count"), errors="coerce"
-            )
+            pub = summary_meta.get("registrations_public_count")
+            emb = summary_meta.get("registrations_embargoed_count")
             if pd.notna(pub) and pub > 0:
                 labels.append("Public")
                 values.append(int(pub))
             if pd.notna(emb) and emb > 0:
                 labels.append("Embargoed")
                 values.append(int(emb))
-
         if values:
             donut_chart(labels, values, title="Public vs Embargoed Registrations")
         else:
             st.info(
-                "No public/embargoed registration counts provided yet. "
+                "No public/embargoed registration counts yet. "
                 "Edit the summary row in the CSV to add them."
             )
 
     st.markdown("---")
 
-    # Bottom row: Total OSF Objects; Top 10 Licenses; Top 10 Add-ons
+    # Donuts row 2
     cD, cE, cF = st.columns(3)
 
+    # Total OSF Objects donut
     with cD:
         obj_counts = (
             data_objects["object_type"]
@@ -506,238 +522,852 @@ with current_tab[0]:
             title="Total OSF Objects",
         )
 
+    # Top 10 licenses
     with cE:
-        licenses = (
-            data_objects["license"]
-            .fillna("Unknown")
-            .replace("", "Unknown")
-            .value_counts()
-            .head(10)
-        )
-        bar_chart(
-            licenses.index.tolist(),
-            licenses.values.tolist(),
-            title="Top 10 Licenses",
-        )
-
-    with cF:
-        if "add_ons" in data_objects.columns:
-            addons = (
-                data_objects["add_ons"]
+        if "license" in data_objects.columns:
+            lic = (
+                data_objects["license"]
                 .fillna("Unknown")
                 .replace("", "Unknown")
                 .value_counts()
                 .head(10)
             )
             bar_chart(
-                addons.index.tolist(),
-                addons.values.tolist(),
+                lic.index.tolist(),
+                lic.values.tolist(),
+                title="Top 10 Licenses",
+            )
+        else:
+            st.info("No license data available.")
+
+    # Top 10 add-ons (split pipe-separated)
+    with cF:
+        if "add_ons" in data_objects.columns:
+            addons_series = data_objects["add_ons"].dropna().astype(str)
+            exploded = addons_series.str.split("|").explode().str.strip()
+            exploded = exploded[exploded != ""]
+            addons_counts = exploded.value_counts().head(10)
+            bar_chart(
+                addons_counts.index.tolist(),
+                addons_counts.values.tolist(),
                 title="Top 10 Add-ons",
             )
         else:
-            st.info("No add-on data in CSV yet.")
+            st.info("No add-ons data available.")
 
-# ------------ USERS TAB ------------
+    st.markdown("---")
 
-with current_tab[1]:
+    # Storage regions donut (projects + registrations)
+    cG, _, _ = st.columns(3)
+    with cG:
+        regions_parts = []
+        if "storage_region" in projects_raw.columns:
+            regions_parts.append(projects_raw["storage_region"])
+        if "storage_region" in regs_raw.columns:
+            regions_parts.append(regs_raw["storage_region"])
+        if regions_parts:
+            regions = (
+                pd.concat(regions_parts, ignore_index=True)
+                .fillna("Unknown")
+                .replace("", "Unknown")
+            )
+            counts = regions.value_counts().head(10)
+            donut_chart(
+                counts.index.tolist(),
+                counts.values.tolist(),
+                title="Top Storage Regions",
+            )
+        else:
+            st.info("No storage region data available.")
+
+# ---------------------------------------------------
+# USERS TAB
+# ---------------------------------------------------
+
+with tabs[1]:
     st.markdown('<div class="osf-section-title">Users</div>', unsafe_allow_html=True)
 
-    st.markdown(
-        f"**{len(users_raw)} Total Users**",
-    )
+    # init customize state
+    if "users_show_customize" not in st.session_state:
+        st.session_state["users_show_customize"] = False
 
-    # Toolbar (filters button exists but is just a placeholder for now)
-    col_filt, col_cust, col_dl = st.columns([1, 1, 1])
-    with col_filt:
-        st.button("Filters")
-    with col_cust:
-        st.button("Customize")
-    with col_dl:
-        csv = users_raw.to_csv(index=False)
-        st.download_button(
-            "Download CSV",
-            data=csv,
-            file_name="users_filtered.csv",
-            mime="text/csv",
+    def toggle_users_customize():
+        st.session_state["users_show_customize"] = not st.session_state[
+            "users_show_customize"
+        ]
+
+    # toolbar
+    ctop1, ctop2, ctop3 = st.columns([4, 1, 1])
+    count_placeholder = ctop1.empty()
+    with ctop2:
+        st.button(
+            "Customize",
+            key="users_customize_btn",
+            on_click=toggle_users_customize,
+            use_container_width=True,
         )
 
-    # Table columns
-    table_cols = [
-        "name_or_title",
-        "department",
-        "orcid_id",
-        "public_projects",
-        "private_projects",
-        "public_registration_count",
-        "embargoed_registration_count",
-        "published_preprint_count",
-        "public_file_count",
-        "storage_gb",
-        "month_last_active",
-        "month_last_login",
-    ]
-    df_display = users_raw.copy()
-    df_display = df_display[table_cols]
+    # filters (simple: department + ORCID)
+    st.markdown("##### Filters")
+    ucol1, ucol2 = st.columns([2, 1])
 
-    df_display = df_display.rename(
-        columns={
-            "name_or_title": "Name",
-            "storage_gb": "Total Storage (GB)",
-            "public_projects": "Public projects",
-            "private_projects": "Private projects",
-            "public_registration_count": "Public registrations",
-            "embargoed_registration_count": "Embargoed registrations",
-            "published_preprint_count": "Published preprints",
-            "public_file_count": "Public file count",
-            "month_last_active": "Last active",
-            "month_last_login": "Last login",
-        }
-    )
+    with ucol1:
+        dept_options = (
+            sorted(
+                users_raw["department"]
+                .dropna()
+                .astype(str)
+                .unique()
+                .tolist()
+            )
+            if "department" in users_raw.columns
+            else []
+        )
+        if dept_options:
+            users_depts = st.multiselect(
+                "Department",
+                options=dept_options,
+                default=[],
+                key="users_depts",
+            )
+        else:
+            users_depts = []
+    with ucol2:
+        if "orcid_id" in users_raw.columns:
+            users_orcid = st.selectbox(
+                "ORCID",
+                ["All", "Has ORCID", "No ORCID"],
+                index=0,
+                key="users_orcid",
+            )
+        else:
+            users_orcid = "All"
 
-    # Pagination
-    page_size = 10
-    page_state_key = "users_page"
-    current_page = st.session_state.get(page_state_key, 0)
-    df_page, total_pages = paginate_df(df_display, page_size, current_page)
-    st.dataframe(df_page, use_container_width=True, hide_index=True)
-    current_page = render_pagination_controls(total_pages, current_page, "users")
-    st.session_state[page_state_key] = current_page
+    users = users_raw.copy()
+    if users_depts:
+        users = users[users["department"].isin(users_depts)]
+    if users_orcid != "All" and "orcid_id" in users.columns:
+        if users_orcid == "Has ORCID":
+            users = users[
+                users["orcid_id"].notna()
+                & (users["orcid_id"].astype(str).str.strip() != "")
+            ]
+        else:
+            users = users[
+                users["orcid_id"].isna()
+                | (users["orcid_id"].astype(str).str.strip() == "")
+            ]
 
-# ------------ PROJECTS TAB ------------
+    count_placeholder.markdown(f"**{len(users):,} Total Users**")
 
-def render_object_tab(raw_df: pd.DataFrame, object_label: str, key_prefix: str):
-    st.markdown(
-        f"<div class='osf-section-title'>{object_label}</div>",
-        unsafe_allow_html=True,
-    )
+    if users.empty:
+        st.info("No users match the current filters.")
+    else:
+        df = users.copy()
 
-    st.markdown(f"**{len(raw_df)} Total {object_label}**")
-
-    col_filt, col_cust, col_dl = st.columns([1, 1, 1])
-    with col_filt:
-        st.button("Filters", key=f"{key_prefix}_filters")
-    with col_cust:
-        st.button("Customize", key=f"{key_prefix}_customize")
-    with col_dl:
-        csv = raw_df.to_csv(index=False)
-        st.download_button(
-            "Download CSV",
-            data=csv,
-            file_name=f"{key_prefix}_filtered.csv",
-            mime="text/csv",
-            key=f"{key_prefix}_download",
+        display = df.rename(
+            columns={
+                "name_or_title": "Name",
+                "department": "Department",
+                "orcid_id": "ORCID iD",
+                "public_projects": "Public projects",
+                "private_projects": "Private projects",
+                "public_registration_count": "Public registrations",
+                "embargoed_registration_count": "Embargoed registrations",
+                "published_preprint_count": "Published preprints",
+                "public_file_count": "Public files",
+                "storage_gb": "Total data stored on OSF (GB)",
+                "month_last_active": "Last active (YYYY-MM)",
+                "month_last_login": "Last login (YYYY-MM)",
+                "report_yearmonth": "Report month (YYYY-MM)",
+            }
         )
 
-    table_cols = [
-        "name_or_title",
-        "osf_link",
-        "created_date",
-        "modified_date",
-        "doi",
-        "storage_region",
-        "storage_gb",
-        "contributor_name",
-        "views_last_30_days",
-        "resource_type",
-        "license",
-        "add_ons",
-        "funder_name",
-    ]
-    cols_existing = [c for c in table_cols if c in raw_df.columns]
-    df_display = raw_df.copy()
-    df_display = df_display[cols_existing]
-    df_display = hyperlinkify(df_display)
+        all_cols = list(display.columns)
+        all_existing = all_cols
 
-    rename_map = {
-        "name_or_title": "Title",
-        "osf_link": "OSF Link",
-        "created_date": "Created date",
-        "modified_date": "Modified date",
-        "storage_region": "Storage region",
-        "storage_gb": "Total data stored on OSF (GB)",
-        "contributor_name": "Creator(s)",
-        "views_last_30_days": "Views (last 30 days)",
-        "resource_type": "Resource type",
-        "license": "License",
-        "add_ons": "Add-ons",
-        "funder_name": "Funder name",
-    }
-    df_display = df_display.rename(columns=rename_map)
+        if st.session_state["users_show_customize"]:
+            with ctop2:
+                customize_columns_box(all_existing, "users")
 
-    page_size = 10
-    page_state_key = f"{key_prefix}_page"
-    current_page = st.session_state.get(page_state_key, 0)
-    df_page, total_pages = paginate_df(df_display, page_size, current_page)
-    st.dataframe(df_page, use_container_width=True, hide_index=True)
-    current_page = render_pagination_controls(total_pages, current_page, key_prefix)
-    st.session_state[page_state_key] = current_page
+        selected_cols = get_saved_columns(all_existing, "users")
+        display = display[selected_cols]
 
+        csv_bytes = display.to_csv(index=False).encode("utf-8")
+        with ctop3:
+            st.download_button(
+                "Download CSV",
+                key="users_download_btn",
+                data=csv_bytes,
+                file_name="users_filtered.csv",
+                mime="text/csv",
+                use_container_width=True,
+            )
 
-with current_tab[2]:
-    render_object_tab(projects_raw, "Projects", "projects")
+        page_size = 10
+        page_state_key = "users_page"
+        current_page = st.session_state.get(page_state_key, 0)
+        page_df, total_pages = paginate_df(display, page_size, current_page)
+        col_cfg = build_link_column_config(page_df)
+        st.dataframe(page_df, hide_index=True, use_container_width=True, column_config=col_cfg)
+        current_page = render_pagination_controls(total_pages, current_page, "users")
+        st.session_state[page_state_key] = current_page
 
-# ------------ REGISTRATIONS TAB ------------
+# ---------------------------------------------------
+# PROJECTS TAB
+# ---------------------------------------------------
 
-with current_tab[3]:
-    render_object_tab(regs_raw, "Registrations", "registrations")
+with tabs[2]:
+    st.markdown('<div class="osf-section-title">Projects</div>', unsafe_allow_html=True)
 
-# ------------ PREPRINTS TAB ------------
+    if "projects_show_filters" not in st.session_state:
+        st.session_state["projects_show_filters"] = False
+    if "projects_show_customize" not in st.session_state:
+        st.session_state["projects_show_customize"] = False
 
-with current_tab[4]:
-    # Slightly different: also show downloads
-    st.markdown(
-        "<div class='osf-section-title'>Preprints</div>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(f"**{len(preprints_raw)} Total Preprints**")
+    def toggle_projects_filters():
+        st.session_state["projects_show_filters"] = not st.session_state[
+            "projects_show_filters"
+        ]
 
-    col_filt, col_cust, col_dl = st.columns([1, 1, 1])
-    with col_filt:
-        st.button("Filters", key="preprints_filters")
-    with col_cust:
-        st.button("Customize", key="preprints_customize")
-    with col_dl:
-        csv = preprints_raw.to_csv(index=False)
-        st.download_button(
-            "Download CSV",
-            data=csv,
-            file_name="preprints_filtered.csv",
-            mime="text/csv",
-            key="preprints_download",
+    def toggle_projects_customize():
+        st.session_state["projects_show_customize"] = not st.session_state[
+            "projects_show_customize"
+        ]
+
+    top_left_col, top_filters, top_customize, top_download = st.columns([4, 1, 1, 1])
+    proj_count_placeholder = top_left_col.empty()
+
+    with top_filters:
+        st.button(
+            "Filters",
+            key="projects_filters_btn",
+            on_click=toggle_projects_filters,
+            use_container_width=True,
+        )
+    with top_customize:
+        st.button(
+            "Customize",
+            key="projects_customize_btn",
+            on_click=toggle_projects_customize,
+            use_container_width=True,
         )
 
-    table_cols = [
-        "name_or_title",
-        "osf_link",
-        "created_date",
-        "modified_date",
-        "doi",
-        "contributor_name",
-        "views_last_30_days",
-        "downloads_last_30_days",
-        "license",
-    ]
-    cols_existing = [c for c in table_cols if c in preprints_raw.columns]
-    df_display = preprints_raw.copy()
-    df_display = df_display[cols_existing]
-    df_display = hyperlinkify(df_display)
+    show_filters = st.session_state["projects_show_filters"]
 
-    df_display = df_display.rename(
-        columns={
-            "name_or_title": "Title",
-            "osf_link": "OSF Link",
-            "created_date": "Created date",
-            "modified_date": "Modified date",
-            "contributor_name": "Creator(s)",
-            "views_last_30_days": "Views (last 30 days)",
-            "downloads_last_30_days": "Downloads (last 30 days)",
-        }
-    )
+    if show_filters:
+        main_col, filter_col = st.columns([4, 2])
+    else:
+        main_col = st.container()
+        filter_col = None
 
-    page_size = 10
-    page_state_key = "preprints_page"
-    current_page = st.session_state.get(page_state_key, 0)
-    df_page, total_pages = paginate_df(df_display, page_size, current_page)
-    st.dataframe(df_page, use_container_width=True, hide_index=True)
-    current_page = render_pagination_controls(total_pages, current_page, "preprints")
-    st.session_state[page_state_key] = current_page
+    creators_selected = []
+    licenses_selected = []
+    regions_selected = []
+    funders_selected = []
+    resource_types_selected = []
+    addons_selected = []
+
+    if filter_col is not None:
+        with filter_col:
+            st.markdown("#### Filter By")
+
+            if "contributor_name" in projects_raw.columns:
+                with st.expander("Creator", expanded=False):
+                    creator_options = sorted(
+                        projects_raw["contributor_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    creators_selected = st.multiselect(
+                        "Creator name",
+                        options=creator_options,
+                        default=[],
+                        key="projects_creator_filter",
+                    )
+
+            if "created_date" in projects_raw.columns:
+                with st.expander("Date created", expanded=False):
+                    years = (
+                        pd.to_datetime(projects_raw["created_date"], errors="coerce")
+                        .dt.year.dropna()
+                        .astype(int)
+                        .unique()
+                        .tolist()
+                    )
+                    years = sorted(years)
+                    options = ["All years"] + [str(y) for y in years]
+                    _ = st.selectbox(
+                        "Year created",
+                        options=options,
+                        index=0,
+                        key="projects_year_filter",
+                    )
+
+            if "license" in projects_raw.columns:
+                with st.expander("License", expanded=False):
+                    license_options = sorted(
+                        projects_raw["license"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    licenses_selected = st.multiselect(
+                        "License",
+                        options=license_options,
+                        default=[],
+                        key="projects_license_filter",
+                    )
+
+            if "storage_region" in projects_raw.columns:
+                with st.expander("Storage region", expanded=False):
+                    region_options = sorted(
+                        projects_raw["storage_region"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    regions_selected = st.multiselect(
+                        "Storage region",
+                        options=region_options,
+                        default=[],
+                        key="projects_region_filter",
+                    )
+
+            if "resource_type" in projects_raw.columns:
+                with st.expander("Resource type", expanded=False):
+                    rt_options = sorted(
+                        projects_raw["resource_type"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    resource_types_selected = st.multiselect(
+                        "Resource type",
+                        options=rt_options,
+                        default=[],
+                        key="projects_resource_type_filter",
+                    )
+
+            if "funder_name" in projects_raw.columns:
+                with st.expander("Funder", expanded=False):
+                    funder_options = sorted(
+                        projects_raw["funder_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    funders_selected = st.multiselect(
+                        "Funder name",
+                        options=funder_options,
+                        default=[],
+                        key="projects_funder_filter",
+                    )
+
+            if "add_ons" in projects_raw.columns:
+                with st.expander("Add-ons", expanded=False):
+                    addon_options = sorted(
+                        projects_raw["add_ons"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    addons_selected = st.multiselect(
+                        "Add-on",
+                        options=addon_options,
+                        default=[],
+                        key="projects_addons_filter",
+                    )
+
+    projects = projects_raw.copy()
+
+    # AND behavior for creators
+    if creators_selected and "contributor_name" in projects.columns:
+        def has_all_creators(val: str) -> bool:
+            text = str(val) if pd.notna(val) else ""
+            return all(c in text for c in creators_selected)
+
+        projects = projects[projects["contributor_name"].apply(has_all_creators)]
+
+    # date year
+    if "projects_year_filter" in st.session_state and "created_date" in projects.columns:
+        year_choice = st.session_state.get("projects_year_filter")
+        if year_choice and year_choice != "All years":
+            year_val = int(year_choice)
+            years = pd.to_datetime(projects["created_date"], errors="coerce").dt.year
+            projects = projects[years == year_val]
+
+    if licenses_selected and "license" in projects.columns:
+        projects = projects[projects["license"].isin(licenses_selected)]
+
+    if regions_selected and "storage_region" in projects.columns:
+        projects = projects[projects["storage_region"].isin(regions_selected)]
+
+    if funders_selected and "funder_name" in projects.columns:
+        projects = projects[projects["funder_name"].isin(funders_selected)]
+
+    if resource_types_selected and "resource_type" in projects.columns:
+        projects = projects[projects["resource_type"].isin(resource_types_selected)]
+
+    if addons_selected and "add_ons" in projects.columns:
+        # Simple contains-any logic
+        def has_any_addon(val: str) -> bool:
+            text = str(val) if pd.notna(val) else ""
+            return any(a in text for a in addons_selected)
+
+        projects = projects[projects["add_ons"].apply(has_any_addon)]
+
+    proj_count_placeholder.markdown(f"**{len(projects):,} Total Projects**")
+
+    with main_col:
+        if projects.empty:
+            st.info("No projects match the current filters.")
+        else:
+            df = projects.copy()
+            display = df.rename(
+                columns={
+                    "name_or_title": "Title",
+                    "osf_link": "OSF Link",
+                    "created_date": "Created date",
+                    "modified_date": "Modified date",
+                    "doi": "DOI",
+                    "storage_region": "Storage region",
+                    "storage_gb": "Total data stored on OSF (GB)",
+                    "contributor_name": "Creator(s)",
+                    "views_last_30_days": "Views (last 30 days)",
+                    "resource_type": "Resource type",
+                    "license": "License",
+                    "add_ons": "Add-ons",
+                    "funder_name": "Funder name",
+                }
+            )
+
+            all_cols = list(display.columns)
+            all_existing = all_cols
+
+            if st.session_state["projects_show_customize"]:
+                with top_customize:
+                    customize_columns_box(all_existing, "projects")
+
+            selected_cols = get_saved_columns(all_existing, "projects")
+            display = display[selected_cols]
+
+            csv_bytes = display.to_csv(index=False).encode("utf-8")
+            with top_download:
+                st.download_button(
+                    "Download CSV",
+                    key="projects_download_btn",
+                    data=csv_bytes,
+                    file_name="projects_filtered.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+
+            page_size = 10
+            page_state_key = "projects_page"
+            current_page = st.session_state.get(page_state_key, 0)
+            page_df, total_pages = paginate_df(display, page_size, current_page)
+            col_cfg = build_link_column_config(page_df)
+            st.dataframe(page_df, hide_index=True, use_container_width=True, column_config=col_cfg)
+            current_page = render_pagination_controls(total_pages, current_page, "projects")
+            st.session_state[page_state_key] = current_page
+
+# ---------------------------------------------------
+# REGISTRATIONS TAB
+# ---------------------------------------------------
+
+with tabs[3]:
+    st.markdown('<div class="osf-section-title">Registrations</div>', unsafe_allow_html=True)
+
+    if "regs_show_filters" not in st.session_state:
+        st.session_state["regs_show_filters"] = False
+    if "regs_show_customize" not in st.session_state:
+        st.session_state["regs_show_customize"] = False
+
+    def toggle_regs_filters():
+        st.session_state["regs_show_filters"] = not st.session_state[
+            "regs_show_filters"
+        ]
+
+    def toggle_regs_customize():
+        st.session_state["regs_show_customize"] = not st.session_state[
+            "regs_show_customize"
+        ]
+
+    top_left_col, top_filters, top_customize, top_download = st.columns([4, 1, 1, 1])
+    regs_count_placeholder = top_left_col.empty()
+
+    with top_filters:
+        st.button(
+            "Filters",
+            key="regs_filters_btn",
+            on_click=toggle_regs_filters,
+            use_container_width=True,
+        )
+    with top_customize:
+        st.button(
+            "Customize",
+            key="regs_customize_btn",
+            on_click=toggle_regs_customize,
+            use_container_width=True,
+        )
+
+    show_filters = st.session_state["regs_show_filters"]
+
+    if show_filters:
+        main_col, filter_col = st.columns([4, 2])
+    else:
+        main_col = st.container()
+        filter_col = None
+
+    creators_selected = []
+    licenses_selected = []
+    regions_selected = []
+    resource_types_selected = []
+
+    if filter_col is not None:
+        with filter_col:
+            st.markdown("#### Filter By")
+
+            if "contributor_name" in regs_raw.columns:
+                with st.expander("Creator", expanded=False):
+                    creator_options = sorted(
+                        regs_raw["contributor_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    creators_selected = st.multiselect(
+                        "Creator name",
+                        options=creator_options,
+                        default=[],
+                        key="regs_creator_filter",
+                    )
+
+            if "created_date" in regs_raw.columns:
+                with st.expander("Date created", expanded=False):
+                    years = (
+                        pd.to_datetime(regs_raw["created_date"], errors="coerce")
+                        .dt.year.dropna()
+                        .astype(int)
+                        .unique()
+                        .tolist()
+                    )
+                    years = sorted(years)
+                    options = ["All years"] + [str(y) for y in years]
+                    _ = st.selectbox(
+                        "Year created",
+                        options=options,
+                        index=0,
+                        key="regs_year_filter",
+                    )
+
+            if "license" in regs_raw.columns:
+                with st.expander("License", expanded=False):
+                    license_options = sorted(
+                        regs_raw["license"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    licenses_selected = st.multiselect(
+                        "License",
+                        options=license_options,
+                        default=[],
+                        key="regs_license_filter",
+                    )
+
+            if "storage_region" in regs_raw.columns:
+                with st.expander("Storage region", expanded=False):
+                    region_options = sorted(
+                        regs_raw["storage_region"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    regions_selected = st.multiselect(
+                        "Storage region",
+                        options=region_options,
+                        default=[],
+                        key="regs_region_filter",
+                    )
+
+            if "resource_type" in regs_raw.columns:
+                with st.expander("Resource type", expanded=False):
+                    rt_options = sorted(
+                        regs_raw["resource_type"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    resource_types_selected = st.multiselect(
+                        "Resource type",
+                        options=rt_options,
+                        default=[],
+                        key="regs_resource_type_filter",
+                    )
+
+    regs = regs_raw.copy()
+
+    if creators_selected and "contributor_name" in regs.columns:
+        def has_all_creators(val: str) -> bool:
+            text = str(val) if pd.notna(val) else ""
+            return all(c in text for c in creators_selected)
+
+        regs = regs[regs["contributor_name"].apply(has_all_creators)]
+
+    if "regs_year_filter" in st.session_state and "created_date" in regs.columns:
+        year_choice = st.session_state.get("regs_year_filter")
+        if year_choice and year_choice != "All years":
+            year_val = int(year_choice)
+            years = pd.to_datetime(regs["created_date"], errors="coerce").dt.year
+            regs = regs[years == year_val]
+
+    if licenses_selected and "license" in regs.columns:
+        regs = regs[regs["license"].isin(licenses_selected)]
+
+    if regions_selected and "storage_region" in regs.columns:
+        regs = regs[regs["storage_region"].isin(regions_selected)]
+
+    if resource_types_selected and "resource_type" in regs.columns:
+        regs = regs[regs["resource_type"].isin(resource_types_selected)]
+
+    regs_count_placeholder.markdown(f"**{len(regs):,} Total Registrations**")
+
+    with main_col:
+        if regs.empty:
+            st.info("No registrations match the current filters.")
+        else:
+            df = regs.copy()
+            display = df.rename(
+                columns={
+                    "name_or_title": "Title",
+                    "osf_link": "OSF Link",
+                    "created_date": "Created date",
+                    "modified_date": "Modified date",
+                    "doi": "DOI",
+                    "storage_region": "Storage region",
+                    "storage_gb": "Total data stored on OSF (GB)",
+                    "contributor_name": "Creator(s)",
+                    "views_last_30_days": "Views (last 30 days)",
+                    "resource_type": "Resource type",
+                    "license": "License",
+                    "funder_name": "Funder name",
+                }
+            )
+
+            all_cols = list(display.columns)
+            all_existing = all_cols
+
+            if st.session_state["regs_show_customize"]:
+                with top_customize:
+                    customize_columns_box(all_existing, "regs")
+
+            selected_cols = get_saved_columns(all_existing, "regs")
+            display = display[selected_cols]
+
+            csv_bytes = display.to_csv(index=False).encode("utf-8")
+            with top_download:
+                st.download_button(
+                    "Download CSV",
+                    key="regs_download_btn",
+                    data=csv_bytes,
+                    file_name="registrations_filtered.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+
+            page_size = 10
+            page_state_key = "regs_page"
+            current_page = st.session_state.get(page_state_key, 0)
+            page_df, total_pages = paginate_df(display, page_size, current_page)
+            col_cfg = build_link_column_config(page_df)
+            st.dataframe(page_df, hide_index=True, use_container_width=True, column_config=col_cfg)
+            current_page = render_pagination_controls(total_pages, current_page, "regs")
+            st.session_state[page_state_key] = current_page
+
+# ---------------------------------------------------
+# PREPRINTS TAB
+# ---------------------------------------------------
+
+with tabs[4]:
+    st.markdown('<div class="osf-section-title">Preprints</div>', unsafe_allow_html=True)
+
+    if "preprints_show_filters" not in st.session_state:
+        st.session_state["preprints_show_filters"] = False
+    if "preprints_show_customize" not in st.session_state:
+        st.session_state["preprints_show_customize"] = False
+
+    def toggle_preprints_filters():
+        st.session_state["preprints_show_filters"] = not st.session_state[
+            "preprints_show_filters"
+        ]
+
+    def toggle_preprints_customize():
+        st.session_state["preprints_show_customize"] = not st.session_state[
+            "preprints_show_customize"
+        ]
+
+    top_left_col, top_filters, top_customize, top_download = st.columns([4, 1, 1, 1])
+    preprints_count_placeholder = top_left_col.empty()
+
+    with top_filters:
+        st.button(
+            "Filters",
+            key="preprints_filters_btn",
+            on_click=toggle_preprints_filters,
+            use_container_width=True,
+        )
+    with top_customize:
+        st.button(
+            "Customize",
+            key="preprints_customize_btn",
+            on_click=toggle_preprints_customize,
+            use_container_width=True,
+        )
+
+    show_filters = st.session_state["preprints_show_filters"]
+
+    if show_filters:
+        main_col, filter_col = st.columns([4, 2])
+    else:
+        main_col = st.container()
+        filter_col = None
+
+    creators_selected = []
+    licenses_selected = []
+
+    if filter_col is not None:
+        with filter_col:
+            st.markdown("#### Filter By")
+
+            if "contributor_name" in preprints_raw.columns:
+                with st.expander("Creator", expanded=False):
+                    creator_options = sorted(
+                        preprints_raw["contributor_name"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    creators_selected = st.multiselect(
+                        "Creator name",
+                        options=creator_options,
+                        default=[],
+                        key="preprints_creator_filter",
+                    )
+
+            if "created_date" in preprints_raw.columns:
+                with st.expander("Date created", expanded=False):
+                    years = (
+                        pd.to_datetime(preprints_raw["created_date"], errors="coerce")
+                        .dt.year.dropna()
+                        .astype(int)
+                        .unique()
+                        .tolist()
+                    )
+                    years = sorted(years)
+                    options = ["All years"] + [str(y) for y in years]
+                    _ = st.selectbox(
+                        "Year created",
+                        options=options,
+                        index=0,
+                        key="preprints_year_filter",
+                    )
+
+            if "license" in preprints_raw.columns:
+                with st.expander("License", expanded=False):
+                    license_options = sorted(
+                        preprints_raw["license"]
+                        .dropna()
+                        .astype(str)
+                        .unique()
+                        .tolist()
+                    )
+                    licenses_selected = st.multiselect(
+                        "License",
+                        options=license_options,
+                        default=[],
+                        key="preprints_license_filter",
+                    )
+
+    preprints = preprints_raw.copy()
+
+    if creators_selected and "contributor_name" in preprints.columns:
+        def has_all_creators(val: str) -> bool:
+            text = str(val) if pd.notna(val) else ""
+            return all(c in text for c in creators_selected)
+
+        preprints = preprints[preprints["contributor_name"].apply(has_all_creators)]
+
+    if "preprints_year_filter" in st.session_state and "created_date" in preprints.columns:
+        year_choice = st.session_state.get("preprints_year_filter")
+        if year_choice and year_choice != "All years":
+            year_val = int(year_choice)
+            years = pd.to_datetime(preprints["created_date"], errors="coerce").dt.year
+            preprints = preprints[years == year_val]
+
+    if licenses_selected and "license" in preprints.columns:
+        preprints = preprints[preprints["license"].isin(licenses_selected)]
+
+    preprints_count_placeholder.markdown(f"**{len(preprints):,} Total Preprints**")
+
+    with main_col:
+        if preprints.empty:
+            st.info("No preprints match the current filters.")
+        else:
+            df = preprints.copy()
+            display = df.rename(
+                columns={
+                    "name_or_title": "Title",
+                    "osf_link": "OSF Link",
+                    "created_date": "Created date",
+                    "modified_date": "Modified date",
+                    "doi": "DOI",
+                    "contributor_name": "Creator(s)",
+                    "views_last_30_days": "Views (last 30 days)",
+                    "downloads_last_30_days": "Downloads (last 30 days)",
+                    "license": "License",
+                }
+            )
+
+            all_cols = list(display.columns)
+            all_existing = all_cols
+
+            if st.session_state["preprints_show_customize"]:
+                with top_customize:
+                    customize_columns_box(all_existing, "preprints")
+
+            selected_cols = get_saved_columns(all_existing, "preprints")
+            display = display[selected_cols]
+
+            csv_bytes = display.to_csv(index=False).encode("utf-8")
+            with top_download:
+                st.download_button(
+                    "Download CSV",
+                    key="preprints_download_btn",
+                    data=csv_bytes,
+                    file_name="preprints_filtered.csv",
+                    mime="text/csv",
+                    use_container_width=True,
+                )
+
+            page_size = 10
+            page_state_key = "preprints_page"
+            current_page = st.session_state.get(page_state_key, 0)
+            page_df, total_pages = paginate_df(display, page_size, current_page)
+            col_cfg = build_link_column_config(page_df)
+            st.dataframe(page_df, hide_index=True, use_container_width=True, column_config=col_cfg)
+            current_page = render_pagination_controls(total_pages, current_page, "preprints")
+            st.session_state[page_state_key] = current_page
