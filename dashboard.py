@@ -24,7 +24,9 @@ st.markdown(
     <style>
     body { background-color: #f4f5f7; }
     .main { background-color: #f4f5f7; }
-    .block-container { padding-top: 0.5rem; }
+    .block-container {
+        padding-top: 1.75rem !important;  /* prevent header from being cut off */
+    }
 
     .osf-header {
         display: flex;
@@ -71,6 +73,17 @@ st.markdown(
         border-radius: 999px;
         font-size: 0.75rem;
         color: #ffffff;
+    }
+
+    /* Customize panel styling */
+    .customize-box {
+        background-color: #ffffff;
+        border: 1px solid #d0d4da;
+        border-radius: 8px;
+        padding: 0.5rem 0.75rem;
+        margin-top: 0.25rem;
+        max-width: 320px;
+        box-shadow: 0 2px 4px rgba(15, 23, 42, 0.08);
     }
 
     /* Hide sidebar completely */
@@ -223,37 +236,54 @@ def bar_chart_from_series(series: pd.Series, title: str, top_n: int = 10):
     st.bar_chart(series)
 
 
-def paginate_dataframe(df: pd.DataFrame, page_key: str, page_size: int = 10):
-    """Return a paginated slice of df and render OSF-like pagination controls."""
-    if df.empty:
-        return df
-
+def get_page_df(df: pd.DataFrame, page_key: str, page_size: int = 10):
+    """Return the slice for the current page, and total row count."""
     total_rows = len(df)
+    if total_rows == 0:
+        return df, total_rows
+
     total_pages = max(1, math.ceil(total_rows / page_size))
     page = st.session_state.get(page_key, 1)
     if page < 1 or page > total_pages:
         page = 1
-
-    cols = st.columns(4)
-    with cols[0]:
-        if st.button("≪", key=page_key + "_first") and page != 1:
-            page = 1
-    with cols[1]:
-        if st.button("<", key=page_key + "_prev") and page > 1:
-            page -= 1
-    with cols[2]:
-        if st.button(">", key=page_key + "_next") and page < total_pages:
-            page += 1
-    with cols[3]:
-        if st.button("≫", key=page_key + "_last") and page != total_pages:
-            page = total_pages
-
-    st.session_state[page_key] = page
+        st.session_state[page_key] = page
 
     start = (page - 1) * page_size
     end = start + page_size
-    st.caption(f"Page {page} of {total_pages} · {total_rows:,} rows")
-    return df.iloc[start:end]
+    return df.iloc[start:end], total_rows
+
+
+def render_pagination_controls(page_key: str, total_rows: int, page_size: int = 10):
+    """Render OSF-style pagination controls under the table."""
+    if total_rows <= page_size:
+        return
+
+    total_pages = max(1, math.ceil(total_rows / page_size))
+    page = st.session_state.get(page_key, 1)
+    if page < 1 or page > total_pages:
+        page = 1
+        st.session_state[page_key] = page
+
+    info_col, first_col, prev_col, next_col, last_col = st.columns([3, 1, 1, 1, 1])
+
+    with info_col:
+        st.caption(f"Page {page} of {total_pages} · {total_rows:,} rows")
+
+    with first_col:
+        if st.button("≪", key=page_key + "_first") and page != 1:
+            st.session_state[page_key] = 1
+
+    with prev_col:
+        if st.button("‹", key=page_key + "_prev") and page > 1:
+            st.session_state[page_key] = page - 1
+
+    with next_col:
+        if st.button("›", key=page_key + "_next") and page < total_pages:
+            st.session_state[page_key] = page + 1
+
+    with last_col:
+        if st.button("≫", key=page_key + "_last") and page != total_pages:
+            st.session_state[page_key] = total_pages
 
 
 # =====================================================
@@ -561,12 +591,14 @@ with tab_users:
         all_existing = [c for c in all_cols if c in display.columns]
 
         if st.session_state["users_show_customize"]:
+            st.markdown('<div class="customize-box">', unsafe_allow_html=True)
             selected_cols = st.multiselect(
-                "Columns to display",
+                "Show columns",
                 options=all_existing,
                 default=all_existing,
                 key="users_columns",
             )
+            st.markdown("</div>", unsafe_allow_html=True)
         else:
             selected_cols = all_existing
 
@@ -585,8 +617,9 @@ with tab_users:
             )
 
         st.markdown("#### Results")
-        page_df = paginate_dataframe(display, page_key="users_page", page_size=10)
-        st.dataframe(page_df.reset_index(drop=True))
+        page_df, total_rows = get_page_df(display, page_key="users_page", page_size=10)
+        st.dataframe(page_df, hide_index=True)
+        render_pagination_controls("users_page", total_rows, page_size=10)
 
 
 # ---------------------- PROJECTS --------------------- #
@@ -635,7 +668,6 @@ with tab_projects:
         filter_col = None
 
     creators_selected = []
-    year_selected = None
     licenses_selected = []
     regions_selected = []
     funders_selected = []
@@ -662,6 +694,7 @@ with tab_projects:
                     )
 
             # Date created (year)
+            year_selected = None
             if "dateCreated" in projects_raw.columns:
                 with st.expander("Date created", expanded=False):
                     years = (
@@ -742,7 +775,7 @@ with tab_projects:
                     )
 
             # Institution
-            inst_col = next(
+            inst_col_raw = next(
                 (
                     c
                     for c in projects_raw.columns
@@ -750,10 +783,10 @@ with tab_projects:
                 ),
                 None,
             )
-            if inst_col:
+            if inst_col_raw:
                 with st.expander("Institution", expanded=False):
                     inst_options = sorted(
-                        projects_raw[inst_col].dropna().unique().tolist()
+                        projects_raw[inst_col_raw].dropna().unique().tolist()
                     )
                     institutions_selected = st.multiselect(
                         "Institution",
@@ -763,14 +796,14 @@ with tab_projects:
                     )
 
             # Is part of collection
-            coll_col = next(
+            coll_col_raw = next(
                 (c for c in projects_raw.columns if "collection" in c.lower()),
                 None,
             )
-            if coll_col:
+            if coll_col_raw:
                 with st.expander("Is part of collection", expanded=False):
                     coll_options = sorted(
-                        projects_raw[coll_col].dropna().unique().tolist()
+                        projects_raw[coll_col_raw].dropna().unique().tolist()
                     )
                     collections_selected = st.multiselect(
                         "Collection",
@@ -805,10 +838,10 @@ with tab_projects:
 
         projects = projects[projects["creator.name"].apply(has_all_creators)]
 
-    if "dateCreated" in projects.columns and "projects_year_filter" in st.session_state:
-        year_selected = st.session_state.get("projects_year_filter")
-        if year_selected and year_selected != "All years":
-            year_val = int(year_selected)
+    if "projects_year_filter" in st.session_state and "dateCreated" in projects.columns:
+        year_choice = st.session_state.get("projects_year_filter")
+        if year_choice and year_choice != "All years":
+            year_val = int(year_choice)
             years = pd.to_datetime(projects["dateCreated"], errors="coerce").dt.year
             projects = projects[years == year_val]
 
@@ -821,12 +854,12 @@ with tab_projects:
     if funders_selected and "funder.name" in projects.columns:
         projects = projects[projects["funder.name"].isin(funders_selected)]
 
-    subj_col = next(
+    subj_col_proj = next(
         (c for c in projects.columns if "subject" in c.lower()),
         None,
     )
-    if subjects_selected and subj_col in projects.columns:
-        projects = projects[projects[subj_col].isin(subjects_selected)]
+    if subjects_selected and subj_col_proj in projects.columns:
+        projects = projects[projects[subj_col_proj].isin(subjects_selected)]
 
     if resource_types_selected and "resourceNature.displayLabel" in projects.columns:
         projects = projects[
@@ -896,12 +929,14 @@ with tab_projects:
             all_existing = [c for c in all_cols if c in display.columns]
 
             if st.session_state["projects_show_customize"]:
+                st.markdown('<div class="customize-box">', unsafe_allow_html=True)
                 selected_cols = st.multiselect(
-                    "Columns to display",
+                    "Show columns",
                     options=all_existing,
                     default=all_existing,
                     key="projects_columns",
                 )
+                st.markdown("</div>", unsafe_allow_html=True)
             else:
                 selected_cols = all_existing
 
@@ -919,8 +954,11 @@ with tab_projects:
                 )
 
             st.markdown("#### Results")
-            page_df = paginate_dataframe(display, page_key="projects_page", page_size=10)
-            st.dataframe(page_df.reset_index(drop=True))
+            page_df, total_rows = get_page_df(
+                display, page_key="projects_page", page_size=10
+            )
+            st.dataframe(page_df, hide_index=True)
+            render_pagination_controls("projects_page", total_rows, page_size=10)
 
 
 # ---------------------- REGISTRATIONS ---------------- #
@@ -969,7 +1007,6 @@ with tab_regs:
         filter_col = None
 
     creators_selected = []
-    year_selected = None
     licenses_selected = []
     regions_selected = []
     schemas_selected = []
@@ -991,6 +1028,7 @@ with tab_regs:
                         key="regs_creator_filter",
                     )
 
+            year_selected = None
             if "dateCreated" in regs_raw.columns:
                 with st.expander("Date created", expanded=False):
                     years = (
@@ -1079,10 +1117,10 @@ with tab_regs:
 
         regs = regs[regs["creator.name"].apply(has_all_creators)]
 
-    if "dateCreated" in regs.columns and "regs_year_filter" in st.session_state:
-        year_selected = st.session_state.get("regs_year_filter")
-        if year_selected and year_selected != "All years":
-            year_val = int(year_selected)
+    if "regs_year_filter" in st.session_state and "dateCreated" in regs.columns:
+        year_choice = st.session_state.get("regs_year_filter")
+        if year_choice and year_choice != "All years":
+            year_val = int(year_choice)
             years = pd.to_datetime(regs["dateCreated"], errors="coerce").dt.year
             regs = regs[years == year_val]
 
@@ -1151,12 +1189,14 @@ with tab_regs:
             all_existing = [c for c in all_cols if c in display.columns]
 
             if st.session_state["regs_show_customize"]:
+                st.markdown('<div class="customize-box">', unsafe_allow_html=True)
                 selected_cols = st.multiselect(
-                    "Columns to display",
+                    "Show columns",
                     options=all_existing,
                     default=all_existing,
                     key="regs_columns",
                 )
+                st.markdown("</div>", unsafe_allow_html=True)
             else:
                 selected_cols = all_existing
 
@@ -1174,8 +1214,11 @@ with tab_regs:
                 )
 
             st.markdown("#### Results")
-            page_df = paginate_dataframe(display, page_key="regs_page", page_size=10)
-            st.dataframe(page_df.reset_index(drop=True))
+            page_df, total_rows = get_page_df(
+                display, page_key="regs_page", page_size=10
+            )
+            st.dataframe(page_df, hide_index=True)
+            render_pagination_controls("regs_page", total_rows, page_size=10)
 
 
 # ---------------------- PREPRINTS -------------------- #
@@ -1224,7 +1267,6 @@ with tab_preprints:
         filter_col = None
 
     creators_selected = []
-    year_selected = None
     subjects_selected = []
     licenses_selected = []
 
@@ -1244,6 +1286,7 @@ with tab_preprints:
                         key="preprints_creator_filter",
                     )
 
+            year_selected = None
             if "dateCreated" in preprints_raw.columns:
                 with st.expander("Date created", expanded=False):
                     years = (
@@ -1301,10 +1344,10 @@ with tab_preprints:
 
         preprints = preprints[preprints["creator.name"].apply(has_all_creators)]
 
-    if "dateCreated" in preprints.columns and "preprints_year_filter" in st.session_state:
-        year_selected = st.session_state.get("preprints_year_filter")
-        if year_selected and year_selected != "All years":
-            year_val = int(year_selected)
+    if "preprints_year_filter" in st.session_state and "dateCreated" in preprints.columns:
+        year_choice = st.session_state.get("preprints_year_filter")
+        if year_choice and year_choice != "All years":
+            year_val = int(year_choice)
             years = pd.to_datetime(preprints["dateCreated"], errors="coerce").dt.year
             preprints = preprints[years == year_val]
 
@@ -1353,12 +1396,14 @@ with tab_preprints:
             all_existing = [c for c in all_cols if c in display.columns]
 
             if st.session_state["preprints_show_customize"]:
+                st.markdown('<div class="customize-box">', unsafe_allow_html=True)
                 selected_cols = st.multiselect(
-                    "Columns to display",
+                    "Show columns",
                     options=all_existing,
                     default=all_existing,
                     key="preprints_columns",
                 )
+                st.markdown("</div>", unsafe_allow_html=True)
             else:
                 selected_cols = all_existing
 
@@ -1379,7 +1424,8 @@ with tab_preprints:
             st.metric("Preprints (rows)", fmt(len(display)))
 
             st.markdown("#### Results")
-            page_df = paginate_dataframe(
+            page_df, total_rows = get_page_df(
                 display, page_key="preprints_page", page_size=10
             )
-            st.dataframe(page_df.reset_index(drop=True))
+            st.dataframe(page_df, hide_index=True)
+            render_pagination_controls("preprints_page", total_rows, page_size=10)
