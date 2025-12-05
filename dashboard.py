@@ -24,50 +24,29 @@ def load_data(path: Path) -> Tuple[pd.Series, pd.Series, pd.DataFrame, pd.DataFr
     """
     Load unified CSV.
 
-    Expects:
-      - First column is row_type (or a column that normalizes to 'row_type')
+    Assumptions based on your header:
+      - First column is row_type
       - row_type values: summary, user, project, registration, preprint
-      - Branding is folded into the summary row (branding_institution_* columns).
+      - Branding + summary metrics live on the summary row.
     """
-    # Read as strings; let pandas sniff delimiter (comma, tab, etc.)
+    # Read as strings, let pandas sniff delimiter (comma, tab, etc.)
     df = pd.read_csv(path, dtype=str, sep=None, engine="python")
 
-    # Keep originals for debugging if needed
-    original_cols = list(df.columns)
+    # Normalize column names (strip whitespace, remove BOM)
+    df.columns = [c.replace("\ufeff", "").strip() for c in df.columns]
 
-    # Normalize column names: strip spaces and BOM
-    cleaned_cols = []
-    for c in df.columns:
-        c_clean = c.replace("\ufeff", "").strip()
-        cleaned_cols.append(c_clean)
-    df.columns = cleaned_cols
+    # Force first column to be 'row_type'
+    if len(df.columns) == 0:
+        st.error("CSV appears to have no columns.")
+        st.stop()
 
-    # Try to find an explicit row_type column
-    row_type_col = None
-    for col in df.columns:
-        if col.strip().lower() == "row_type":
-            row_type_col = col
-            break
-
-    # If we still don't have a row_type, assume first column is row_type
-    if row_type_col is None and len(df.columns) > 0:
-        first_col = df.columns[0]
+    first_col = df.columns[0]
+    if first_col != "row_type":
         df = df.rename(columns={first_col: "row_type"})
-        row_type_col = "row_type"
-
-# If we STILL don't have anything, hard fail with debug info
-if row_type_col is None:
-    st.error("ROW_TYPE DEBUG CHECK - this message is from the CURRENT file.")
-    st.stop()
-
-
-    # Ensure internal 'row_type' exists
-    if row_type_col != "row_type":
-        df["row_type"] = df[row_type_col]
 
     df = df.fillna("")
 
-    # Separate subsets
+    # Split by row_type
     summary_df = df[df["row_type"] == "summary"]
     users = df[df["row_type"] == "user"].copy()
     projects = df[df["row_type"] == "project"].copy()
@@ -79,9 +58,7 @@ if row_type_col is None:
         st.stop()
 
     summary_row = summary_df.iloc[0]
-
-    # Branding comes from the summary row
-    branding_row = summary_row
+    branding_row = summary_row  # branding info is embedded in summary row
 
     return branding_row, summary_row, users, projects, registrations, preprints
 
@@ -158,8 +135,7 @@ def download_link_from_df(df: pd.DataFrame, filename: str, label: str, key: str)
 
 def build_link_column_config(df: pd.DataFrame) -> Dict:
     """
-    Treat 'osf_link' (and other obvious URL columns) as clickable.
-    We keep it simple to avoid weird edge cases.
+    Treat obvious link/URL columns as clickable.
     """
     cfg: Dict[str, st.column_config.BaseColumn] = {}
 
@@ -168,7 +144,6 @@ def build_link_column_config(df: pd.DataFrame) -> Dict:
         if "link" in lower or "url" in lower:
             cfg[col] = st.column_config.LinkColumn(col)
         else:
-            # Heuristic: if a lot of values start with http, call it a link
             sample = df[col].dropna().astype(str).head(20)
             if not sample.empty and (sample.str.startswith("http").mean() > 0.6):
                 cfg[col] = st.column_config.LinkColumn(col)
@@ -246,7 +221,7 @@ def render_summary_tab(summary_row: pd.Series,
                        preprints: pd.DataFrame) -> None:
     st.markdown("### Summary")
 
-    # Metrics from summary row + derived counts
+    # Metrics: combo of summary row + derived from detail rows
     total_users = len(users)
     total_monthly_logged_in_users = _safe_int(summary_row.get("summary_monthly_logged_in_users", "0"))
     total_monthly_active_users = _safe_int(summary_row.get("summary_monthly_active_users", "0"))
@@ -256,20 +231,16 @@ def render_summary_tab(summary_row: pd.Series,
     regs_embargoed = _safe_int(summary_row.get("registrations_embargoed_count", "0"))
     total_preprints = len(preprints)
 
-    # Total public/private etc
     total_public_private_projects = projects_public + projects_private
     total_public_embargoed_regs = regs_public + regs_embargoed
 
-    # Public file count: sum across public_file_count column
+    # Public file count from users
     if "public_file_count" in users.columns:
         total_public_files = users["public_file_count"].apply(_safe_int).sum()
     else:
         total_public_files = 0
 
-    # Total storage GB: sum across storage_gb for content rows
-    def as_float(x):
-        return _safe_float(x, 0.0)
-
+    # Total storage (GB) from content rows
     all_content = pd.concat(
         [projects.assign(_src="project"),
          registrations.assign(_src="registration"),
@@ -277,7 +248,7 @@ def render_summary_tab(summary_row: pd.Series,
         ignore_index=True,
     )
     if "storage_gb" in all_content.columns:
-        total_storage_gb = all_content["storage_gb"].apply(as_float).sum()
+        total_storage_gb = all_content["storage_gb"].apply(_safe_float).sum()
     else:
         total_storage_gb = 0.0
 
@@ -313,7 +284,7 @@ def render_summary_tab(summary_row: pd.Series,
     st.write("---")
 
     # Donut helper using Vega-Lite
-    def donut_from_counts(title: str, counts: Dict[str, int]):
+    def donut_from_counts(title: str, counts: Dict[str, int]) -> None:
         data = pd.DataFrame(
             {"category": list(counts.keys()), "value": list(counts.values())}
         )
@@ -346,7 +317,7 @@ def render_summary_tab(summary_row: pd.Series,
             dept_col = candidate
             break
 
-    users_by_dept = {}
+    users_by_dept: Dict[str, int] = {}
     if dept_col:
         users_by_dept = users[dept_col].replace("", "Unknown").value_counts().to_dict()
 
@@ -397,7 +368,7 @@ def render_summary_tab(summary_row: pd.Series,
     # Top 10 add-ons from all_content (splitting add_ons by ';' or ',')
     addon_counts: Dict[str, int] = {}
     if "add_ons" in all_content.columns:
-        all_addons = []
+        all_addons: List[str] = []
         for cell in all_content["add_ons"].fillna(""):
             parts = [p.strip() for p in cell.replace(";", ",").split(",") if p.strip()]
             all_addons.extend(parts)
@@ -480,8 +451,7 @@ def render_table_tab(
                     key=f"{key_prefix}_f_{col_name}",
                 )
                 if selected:
-                    # AND behavior: for text columns containing multiple values,
-                    # require that each selected value appears in that cell.
+                    # AND behavior: require each selected value to appear in the cell
                     mask = pd.Series(True, index=work_df.index)
                     for val in selected:
                         mask &= work_df[col_name].astype(str).str.contains(str(val), na=False)
@@ -547,13 +517,13 @@ def render_table_tab(
 # MAIN APP
 # -------------------------------------------------------------------
 
-def main():
+def main() -> None:
     try:
         branding_row, summary_row, users, projects, registrations, preprints = load_data(DATA_FILE)
     except FileNotFoundError:
         st.error(
             f"Could not find CSV file at `{DATA_FILE.name}`. "
-            "Make sure it is in the same folder as `dashboard.py`."
+            "Make sure it is in the same folder as `dashboard.py` in your repo."
         )
         return
 
