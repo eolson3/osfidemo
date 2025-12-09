@@ -33,7 +33,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-DATA_FILE = "osfi_dashboard_data_with_summary_and_branding.csv"
+DATA_FILE = "institution_dashboard_data.csv"
 
 # --- Palette (approximate COS brand based on screenshots) ---
 PRIMARY_BLUE = "#1668b8"      # main text / icons
