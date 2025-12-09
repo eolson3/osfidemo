@@ -779,7 +779,7 @@ def render_entity_tab(
 
     # Toolbar – right aligned buttons
     with col_custom:
-        with st.popover("Customize", key=f"{page_key}_customize"):
+         with st.expander("Customize"):
             st.markdown("**Show columns**")
             all_cols = list(df_display.columns)
             default_cols = st.session_state.get(
