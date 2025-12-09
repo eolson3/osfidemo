@@ -10,7 +10,7 @@ import streamlit as st
 # Basic config
 # ------------------------------------------------------------------
 
-DATA_FILE = "osfi_dashboard_data_with_summary.csv"
+DATA_FILE = "osfi_dashboard_data_with_summary_and_branding.csv"
 
 st.set_page_config(
     page_title="OSF Institutions Dashboard (Demo)",
