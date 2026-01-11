@@ -1,780 +1,454 @@
-# dashboard.py
-"""
-Institutions Dashboard (Demo) – Single–CSV version with pure Streamlit tables.
-
-Expects a CSV with a `row_type` column containing:
-  - summary
-  - user
-  - project
-  - registration
-  - preprint
-
-Other columns:
-  name_or_title, osf_link, created_date, modified_date, doi,
-  storage_region, storage_byte_count, storage_gb,
-  views_last_30_days, downloads_last_30_days,
-  license, resource_type, add_ons, funder_name,
-  contributor_name, creator_orcid, department, orcid_id,
-  public_projects, private_projects,
-  public_registration_count, embargoed_registration_count,
-  published_preprint_count, public_file_count,
-  month_last_active, month_last_login, report_yearmonth,
-  branding_institution_name, branding_institution_logo_url,
-  report_month,
-  projects_public_count, projects_private_count,
-  registrations_public_count, registrations_embargoed_count,
-  summary_monthly_logged_in_users, summary_monthly_active_users
-"""
-
 import math
-from collections import Counter
+from pathlib import Path
 
+import altair as alt
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
-DATA_FILE = "institution_dashboard_data.csv"
+# -----------------------------
+# Configuration
+# -----------------------------
+DEFAULT_DATA_FILE = "osfi_dashboard_data_v2_no_users_tab.csv"
 
-# --- Palette (approximate COS brand based on screenshots) ---
-PRIMARY_BLUE = "#1668b8"      # main text / icons
-ACCENT_BLUE = "#17a2ff"       # large donut teal
-ACCENT_ORANGE = "#f9a65a"
-ACCENT_PINK = "#ff6b6b"
-ACCENT_PURPLE = "#8a6fd1"
-LIGHT_BG = "#f5f8fc"
-CARD_BORDER = "#e1e4eb"
-TEXT_DARK = "#1f2933"
-TEXT_MUTED = "#6b7280"
+# Approximate OSF Institutions dashboard styling from screenshots
+CSS = """
+<style>
+:root{
+  --page-bg:#F3F8FC;
+  --card-bg:#FFFFFF;
+  --border:#E6EDF3;
+  --text:#22313F;
+  --muted:#6B7C93;
+  --accent:#2E77D0;
+  --accent-soft:#E8F1FB;
+  --link:#2E77D0;
+}
+html, body, [data-testid="stAppViewContainer"]{
+  background: var(--page-bg);
+}
+[data-testid="stHeader"]{ background: transparent; }
+.main .block-container{
+  padding-top: 1.2rem;
+  max-width: 1280px;
+}
+.osfi-brand{
+  display:flex; align-items:center; gap:16px;
+  margin: 6px 0 14px 0;
+}
+.osfi-brand img{
+  width:56px; height:56px; object-fit:contain;
+}
+.osfi-brand .title{
+  font-size: 36px; font-weight: 750; color: var(--text);
+  line-height: 1.1;
+}
+.osfi-brand .subtitle{
+  font-size: 16px; color: var(--muted); margin-top: 4px;
+}
+.osfi-tabs { margin-top: 6px; }
 
+.osfi-card{
+  background: var(--card-bg);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 18px 18px 16px 18px;
+}
+.metric-wrap{
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  min-height: 142px;
+}
+.metric-circle{
+  width: 86px; height: 86px; border-radius: 999px;
+  background: var(--accent-soft);
+  display:flex; align-items:center; justify-content:center;
+  color: var(--accent);
+  font-size: 24px; font-weight: 750;
+  margin-bottom: 10px;
+}
+.metric-label{
+  text-align:center;
+  color: var(--text);
+  font-size: 14px;
+}
+.section-title{
+  font-size: 18px; font-weight: 750; color: var(--text);
+  margin: 0 0 10px 0;
+}
+.kpi-title{
+  font-size: 18px; font-weight: 750; color: var(--accent);
+  margin: 10px 0 10px 0;
+}
+.small-muted{ color: var(--muted); font-size: 12px; }
 
-# -------------------------------------------------------------------
-# Data loading & helpers
-# -------------------------------------------------------------------
+a, a:visited { color: var(--link); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.controls-row{
+  display:flex; justify-content:flex-end; gap:12px; align-items:center;
+}
+.stDownloadButton button, .stButton>button{
+  border-radius: 8px !important;
+}
+</style>
+"""
+
+# -----------------------------
+# Utilities
+# -----------------------------
+def _norm(s: str) -> str:
+    return (
+        str(s)
+        .strip()
+        .replace("\ufeff", "")
+        .lower()
+        .replace(" ", "_")
+    )
+
 @st.cache_data(show_spinner=False)
-def load_data(path: str):
-    df = pd.read_csv(path, dtype=str)
-    df.columns = [c.strip() for c in df.columns]
+def load_data(path: str) -> tuple[pd.DataFrame, pd.Series]:
+    p = Path(path)
+    if not p.exists():
+        # try relative to app file
+        p = Path(__file__).parent / path
+    df = pd.read_csv(p, dtype=str).fillna("")
+    original_cols = df.columns.tolist()
+    df.columns = [_norm(c) for c in df.columns]
+
+    # Accept either row_type or object_type
+    if "row_type" not in df.columns and "object_type" in df.columns:
+        df = df.rename(columns={"object_type": "row_type"})
 
     if "row_type" not in df.columns:
         raise ValueError(
-            "CSV must include a 'row_type' column "
-            "(branding/summary/user/project/registration/preprint)."
+            "CSV must include a 'row_type' column (summary/project/registration/preprint). "
+            f"Found columns: {original_cols}"
         )
 
-    df = df.fillna("")
+    # ensure required branding fields exist
+    for c in ["branding_institution_name", "branding_institution_logo_url", "report_month"]:
+        if c not in df.columns:
+            df[c] = ""
 
+    # summary row (single)
     summary = df[df["row_type"] == "summary"]
-    if summary.empty:
-        raise ValueError("CSV must include at least one row with row_type='summary'.")
-    summary_row = summary.iloc[0]
+    summary_row = summary.iloc[0] if len(summary) else pd.Series(dtype=str)
+    return df, summary_row
 
-    users = df[df["row_type"] == "user"].copy()
-    projects = df[df["row_type"] == "project"].copy()
-    registrations = df[df["row_type"] == "registration"].copy()
-    preprints = df[df["row_type"] == "preprint"].copy()
-
-    return df, summary_row, users, projects, registrations, preprints
-
-
-def parse_int(value, default=0):
+def _to_int(x: str) -> int:
     try:
-        if value is None or value == "":
-            return default
-        return int(float(str(value)))
+        return int(float(str(x).strip() or 0))
     except Exception:
-        return default
+        return 0
 
-
-def parse_float(value, default=0.0):
+def _to_float(x: str) -> float:
     try:
-        if value is None or value == "":
-            return default
-        return float(str(value))
+        return float(str(x).strip() or 0.0)
     except Exception:
-        return default
+        return 0.0
 
+def make_link(cell: str) -> str:
+    # If already looks like a URL, use it directly; else treat as OSF id
+    s = str(cell).strip()
+    if not s:
+        return ""
+    if s.startswith("http://") or s.startswith("https://"):
+        return s
+    return f"https://osf.io/{s}/"
 
-def compute_summary_metrics(summary_row, users, preprints):
-    """All numbers for the top summary cards live here."""
-    total_users = len(users)
+def build_display_df(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
+    cols_present = [c for c in cols if c in df.columns]
+    out = df[cols_present].copy()
 
-    total_monthly_logged_in = parse_int(
-        summary_row.get("summary_monthly_logged_in_users"), default=0
-    )
-    total_monthly_active = parse_int(
-        summary_row.get("summary_monthly_active_users"), default=0
-    )
+    # hyperlink formatting for osf_link and doi
+    if "osf_link" in out.columns:
+        out["osf_link"] = out["osf_link"].apply(make_link)
+    if "doi" in out.columns:
+        out["doi"] = out["doi"].apply(lambda d: f"https://doi.org/{d.strip()}" if str(d).strip() and not str(d).startswith("http") else str(d).strip())
 
-    public_projects = parse_int(summary_row.get("projects_public_count"), 0)
-    private_projects = parse_int(summary_row.get("projects_private_count"), 0)
-    total_projects = public_projects + private_projects
+    return out
 
-    public_regs = parse_int(summary_row.get("registrations_public_count"), 0)
-    embargoed_regs = parse_int(
-        summary_row.get("registrations_embargoed_count"), 0
-    )
-    total_regs = public_regs + embargoed_regs
+def column_config_for(df: pd.DataFrame) -> dict:
+    cfg = {}
+    if "osf_link" in df.columns:
+        cfg["osf_link"] = st.column_config.LinkColumn("OSF Link", display_text="Open")
+    if "doi" in df.columns:
+        cfg["doi"] = st.column_config.LinkColumn("DOI", display_text="Open")
+    if "storage_gb" in df.columns:
+        cfg["storage_gb"] = st.column_config.NumberColumn("Storage (GB)", format="%.2f")
+    if "storage_byte_count" in df.columns:
+        cfg["storage_byte_count"] = st.column_config.NumberColumn("Storage (bytes)")
+    if "views_last_30_days" in df.columns:
+        cfg["views_last_30_days"] = st.column_config.NumberColumn("Views (30d)")
+    if "downloads_last_30_days" in df.columns:
+        cfg["downloads_last_30_days"] = st.column_config.NumberColumn("Downloads (30d)")
+    return cfg
 
-    total_preprints = len(preprints)
+def apply_filters(df: pd.DataFrame, filters: dict) -> pd.DataFrame:
+    out = df.copy()
+    for col, val in filters.items():
+        if col not in out.columns or val in ("", None, "All"):
+            continue
+        out = out[out[col] == val]
+    return out
 
-    total_public_files = parse_int(summary_row.get("public_file_count"), 0)
-    total_storage_gb = parse_float(summary_row.get("storage_gb"), 0.0)
-
-    return {
-        "total_users": total_users,
-        "total_monthly_logged_in": total_monthly_logged_in,
-        "total_monthly_active": total_monthly_active,
-        "total_projects": total_projects,
-        "total_regs": total_regs,
-        "total_preprints": total_preprints,
-        "total_public_files": total_public_files,
-        "total_storage_gb": total_storage_gb,
-        "public_projects": public_projects,
-        "private_projects": private_projects,
-        "public_regs": public_regs,
-        "embargoed_regs": embargoed_regs,
-    }
-
-
-# -------------------------------------------------------------------
-# Styling
-# -------------------------------------------------------------------
-def inject_css():
-    st.markdown(
-        f"""
-        <style>
-        header {{visibility: hidden;}}
-        #MainMenu {{visibility: hidden;}}
-        footer {{visibility: hidden;}}
-
-        .block-container {{
-            padding-top: 2.2rem;
-            padding-left: 2.5rem;
-            padding-right: 2.5rem;
-            background: {LIGHT_BG};
-        }}
-
-        .osf-brand-bar {{
-            background: #0e3454;
-            color: white;
-            padding: 1.0rem 1.8rem;
-            border-radius: 0.5rem;
-            margin-bottom: 1.2rem;
-            display: flex;
-            align-items: center;
-            gap: 0.9rem;
-        }}
-
-        .osf-logo-circle {{
-            width: 40px;
-            height: 40px;
-            border-radius: 999px;
-            background: white;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-weight: 700;
-            font-size: 0.9rem;
-            color: #0e3454;
-            margin-right: 10px;
-        }}
-
-        .osf-brand-title {{
-            font-size: 1.3rem;
-            font-weight: 700;
-        }}
-
-        .osf-brand-subtitle {{
-            font-size: 0.85rem;
-            opacity: 0.9;
-        }}
-
-        .osf-summary-card {{
-            background: white;
-            border-radius: 0.7rem;
-            border: 1px solid {CARD_BORDER};
-            padding: 0.9rem 1.2rem;
-            display: flex;
-            flex-direction: column;
-            justify-content: center;
-            align-items: center;
-            gap: 0.3rem;
-        }}
-
-        .osf-summary-number {{
-            font-size: 1.6rem;
-            font-weight: 700;
-            color: {PRIMARY_BLUE};
-        }}
-
-        .osf-summary-label {{
-            font-size: 0.9rem;
-            color: {TEXT_MUTED};
-            text-align: center;
-        }}
-
-        .osf-section-title {{
-            font-size: 1.25rem;
-            font-weight: 700;
-            margin: 0.5rem 0 0.8rem 0;
-            color: {TEXT_DARK};
-        }}
-
-        .osf-table-wrapper {{
-            border-radius: 0.7rem;
-            border: 1px solid {CARD_BORDER};
-            overflow: hidden;
-            background: white;
-            padding: 0.25rem 0.25rem 0 0.25rem;
-        }}
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# -------------------------------------------------------------------
-# Charts
-# -------------------------------------------------------------------
-def donut_chart(title, labels, values, colors):
-    fig = go.Figure(
-        data=[
-            go.Pie(
-                labels=labels,
-                values=values,
-                hole=0.65,
-                marker=dict(colors=colors, line=dict(color="white", width=1)),
-                textinfo="percent",
-            )
-        ]
-    )
-    fig.update_layout(
-        margin=dict(l=0, r=0, t=40, b=0),
-        showlegend=True,
-        legend=dict(orientation="h", y=-0.2),
-        title=dict(text=title, x=0.5, xanchor="center", y=0.99),
-    )
-    return fig
-
-
-def bar_chart(title, items_counter: Counter, top_n=10):
-    items = items_counter.most_common(top_n)
-    if not items:
-        fig = go.Figure()
-        fig.update_layout(margin=dict(l=0, r=0, t=40, b=0), title=title)
-        return fig
-
-    labels, counts = zip(*items)
-    fig = go.Figure(
-        data=[
-            go.Bar(
-                x=list(labels),
-                y=list(counts),
-            )
-        ]
-    )
-    fig.update_layout(
-        margin=dict(l=0, r=0, t=40, b=40),
-        title=dict(text=title, x=0.01, xanchor="left"),
-        xaxis_tickangle=-35,
-    )
-    return fig
-
-
-# -------------------------------------------------------------------
-# Table helper (pagination + basic styling)
-# -------------------------------------------------------------------
-def render_table(
-    df: pd.DataFrame,
-    page_key: str,
-    columns_to_show,
-    link_columns=None,
-    height=420,
-):
-    """
-    Render a paginated, non-editable table with sorting via native
-    Streamlit data editor. Index hidden; pagination controls appear below.
-    """
-    if link_columns is None:
-        link_columns = []
-
-    if not columns_to_show:
-        columns_to_show = [c for c in df.columns if c != "row_type"]
-
-    display_df = df[columns_to_show].copy()
-
-    # Pagination state
-    page_size = 10
-    total_rows = len(display_df)
-    total_pages = max(1, math.ceil(total_rows / page_size))
-
-    current_page = st.session_state.get(page_key, 1)
-    current_page = max(1, min(current_page, total_pages))
-    st.session_state[page_key] = current_page
-
-    start = (current_page - 1) * page_size
+def paginate(df: pd.DataFrame, page_key: str, page_size: int = 25) -> tuple[pd.DataFrame, int, int]:
+    n = len(df)
+    total_pages = max(1, math.ceil(n / page_size))
+    if page_key not in st.session_state:
+        st.session_state[page_key] = 1
+    page = int(st.session_state[page_key])
+    page = max(1, min(page, total_pages))
+    start = (page - 1) * page_size
     end = start + page_size
-    page_df = display_df.iloc[start:end]
+    return df.iloc[start:end].copy(), page, total_pages
 
-    # Column configs for link columns
-    col_config = {}
-    for col in link_columns:
-        if col in page_df.columns:
-            # Expect these cells to contain full URLs; display text will be the URL itself
-            col_config[col] = st.column_config.LinkColumn(col)
-
-    with st.container():
-        st.markdown('<div class="osf-table-wrapper">', unsafe_allow_html=True)
-        st.data_editor(
-            page_df,
-            hide_index=True,
-            disabled=True,
-            column_config=col_config,
-            height=height,
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # Pagination controls under table
-    col_prev2, col_prev, col_next, col_next2, col_page = st.columns(
-        [0.3, 0.3, 0.3, 0.3, 2.8]
-    )
-    with col_prev2:
-        if st.button("≪", key=f"{page_key}_first", help="First page"):
-            st.session_state[page_key] = 1
-    with col_prev:
-        if st.button("‹", key=f"{page_key}_prev", help="Previous page"):
-            st.session_state[page_key] = max(1, current_page - 1)
-    with col_next:
-        if st.button("›", key=f"{page_key}_next", help="Next page"):
-            st.session_state[page_key] = min(total_pages, current_page + 1)
-    with col_next2:
-        if st.button("≫", key=f"{page_key}_last", help="Last page"):
-            st.session_state[page_key] = total_pages
-    with col_page:
-        st.write(f"Page {current_page} of {total_pages} • {total_rows} results")
-
-
-# -------------------------------------------------------------------
-# Page builders
-# -------------------------------------------------------------------
-def render_branding(summary_row):
-    inst_name = summary_row.get("branding_institution_name", "").strip()
-    logo_url = summary_row.get("branding_institution_logo_url", "").strip()
-    report_month = summary_row.get("report_month", "").strip()
-
-    if not inst_name:
-        inst_name = "Center For Open Science [Test]"
-
-    st.markdown("<div class='osf-brand-bar'>", unsafe_allow_html=True)
-
-    if logo_url:
-        st.markdown(
-            f"<img src='{logo_url}' style='width:40px;height:40px;border-radius:999px;'>",
-            unsafe_allow_html=True,
-        )
-    else:
-        st.markdown(
-            "<div class='osf-logo-circle'>OSF</div>",
-            unsafe_allow_html=True,
-        )
-
-    col_title, _ = st.columns([4, 1])
-    with col_title:
-        st.markdown(
-            f"""
-            <div>
-              <div class="osf-brand-title">{inst_name}</div>
-              <div class="osf-brand-subtitle">
-                Institutions Dashboard (Demo){' • Report month: ' + report_month if report_month else ''}
-              </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
-
-    st.markdown("</div>", unsafe_allow_html=True)
-
-
-def render_summary_tab(summary_row, users, projects, registrations, preprints):
-    metrics = compute_summary_metrics(summary_row, users, preprints)
-
-    st.markdown("## Summary")
-
-    # Top cards
-    top_cols = st.columns(4)
-    cards = [
-        ("Total Users", metrics["total_users"]),
-        ("Total Monthly Logged in Users", metrics["total_monthly_logged_in"]),
-        ("Total Monthly Active Users", metrics["total_monthly_active"]),
-        ("OSF Public and Private Projects", metrics["total_projects"]),
-    ]
-    for col, (label, value) in zip(top_cols, cards):
-        with col:
-            st.markdown(
-                f"""
-                <div class="osf-summary-card">
-                  <div class="osf-summary-number">{value}</div>
-                  <div class="osf-summary-label">{label}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    bottom_cols = st.columns(4)
-    cards2 = [
-        ("OSF Public and Embargoed Registrations", metrics["total_regs"]),
-        ("OSF Preprints", metrics["total_preprints"]),
-        ("Total Public File Count", metrics["total_public_files"]),
-        ("Total Storage in GB", metrics["total_storage_gb"]),
-    ]
-    for col, (label, value) in zip(bottom_cols, cards2):
-        with col:
-            st.markdown(
-                f"""
-                <div class="osf-summary-card">
-                  <div class="osf-summary-number">{value}</div>
-                  <div class="osf-summary-label">{label}</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Donuts row 1
-    st.markdown('<div class="osf-section-title">Overview</div>', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-
-    # Total users by department
-    dept_counts = Counter(
-        (dept if dept else "Unknown") for dept in users.get("department", [])
-    )
-    with c1:
-        fig = donut_chart(
-            "Total Users by Department",
-            list(dept_counts.keys()),
-            list(dept_counts.values()),
-            [ACCENT_BLUE, ACCENT_ORANGE, ACCENT_PINK, ACCENT_PURPLE],
-        )
-        st.plotly_chart(fig)
-
-    # Public vs private projects
-    with c2:
-        fig = donut_chart(
-            "Public vs Private Projects",
-            ["Public", "Private"],
-            [metrics["public_projects"], metrics["private_projects"]],
-            [ACCENT_BLUE, ACCENT_PINK],
-        )
-        st.plotly_chart(fig)
-
-    with c3:
-        fig = donut_chart(
-            "Public vs Embargoed Registrations",
-            ["Public", "Embargoed"],
-            [metrics["public_regs"], metrics["embargoed_regs"]],
-            [ACCENT_BLUE, ACCENT_PINK],
-        )
-        st.plotly_chart(fig)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Total OSF objects donut + Top 10 Licenses + Top 10 Add-ons (bars)
-    c1, c2, c3 = st.columns(3)
-
-    with c1:
-        labels = [
-            "Public registrations",
-            "Embargoed registrations",
-            "Public projects",
-            "Private projects",
-            "Preprints",
-        ]
-        values = [
-            metrics["public_regs"],
-            metrics["embargoed_regs"],
-            metrics["public_projects"],
-            metrics["private_projects"],
-            metrics["total_preprints"],
-        ]
-        colors = [
-            ACCENT_BLUE,
-            ACCENT_PINK,
-            ACCENT_ORANGE,
-            ACCENT_PURPLE,
-            "#ffb36b",
-        ]
-        fig = donut_chart("Total OSF Objects", labels, values, colors)
-        st.plotly_chart(fig)
-
-    with c2:
-        license_counts = Counter(
-            lic for lic in projects.get("license", []) if lic not in ("", "-")
-        )
-        fig = bar_chart("Top 10 Licenses", license_counts)
-        st.plotly_chart(fig)
-
-    with c3:
-        add_on_counter = Counter()
-        for val in projects.get("add_ons", []):
-            if not val:
-                continue
-            for part in str(val).split(","):
-                name = part.strip()
-                if name:
-                    add_on_counter[name] += 1
-        fig = bar_chart("Top 10 Add-ons", add_on_counter)
-        st.plotly_chart(fig)
-
-    st.markdown("<br>", unsafe_allow_html=True)
-
-    # Storage regions donut
-    c1, _, _ = st.columns(3)
-    with c1:
-        storage_counts = Counter(
-            region if region else "Unknown"
-            for region in pd.concat(
-                [
-                    projects.get("storage_region", pd.Series(dtype=str)),
-                    registrations.get("storage_region", pd.Series(dtype=str)),
-                    preprints.get("storage_region", pd.Series(dtype=str)),
-                ]
-            )
-        )
-        fig = donut_chart(
-            "Top Storage Regions",
-            list(storage_counts.keys()),
-            list(storage_counts.values()),
-            [ACCENT_BLUE, ACCENT_ORANGE, ACCENT_PINK, ACCENT_PURPLE],
-        )
-        st.plotly_chart(fig)
-
-
-def users_toolbar(users: pd.DataFrame):
-    """Right-aligned: Has ORCID, Department dropdown, Customize, Download, Chart."""
-    cols = st.columns([4, 1.4, 2.4, 1.4, 0.9, 0.9])
-
-    has_orcid_key = "users_filter_has_orcid"
-    dept_key = "users_filter_department"
-    customize_key = "users_customize_cols"
-
-    with cols[0]:
-        st.markdown(
-            f"<span style='font-weight:600;color:{PRIMARY_BLUE};font-size:0.95rem;'>"
-            f"{len(users)} Total Users</span>",
-            unsafe_allow_html=True,
-        )
-
-    with cols[1]:
-        has_orcid = st.checkbox(
-            "Has ORCID",
-            key=has_orcid_key,
-            value=st.session_state.get(has_orcid_key, False),
-        )
-
-    with cols[2]:
-        departments = sorted(
-            [d for d in users.get("department", "").unique() if d not in ("", "-")]
-        )
-        options = ["All departments"] + departments
-        current = st.session_state.get(dept_key, "All departments")
-        dept_choice = st.selectbox(
-            "Department", options, index=options.index(current) if current in options else 0
-        )
-        st.session_state[dept_key] = dept_choice
-
-    with cols[3]:
-        with st.popover("Customize"):
-            st.write("Show columns")
-            default_cols = [
-                "name_or_title",
-                "department",
-                "osf_link",
-                "orcid_id",
-                "public_projects",
-                "private_projects",
-                "public_registration_count",
-                "embargoed_registration_count",
-                "published_preprint_count",
-                "public_file_count",
-                "storage_gb",
-                "created_date",
-                "modified_date",
-                "month_last_login",
-                "month_last_active",
-            ]
-            all_possible = [c for c in users.columns if c not in ("row_type",)]
-            selected = st.multiselect(
-                "",
-                options=all_possible,
-                default=[c for c in default_cols if c in all_possible],
-                label_visibility="collapsed",
-                key=customize_key,
-            )
-
-    with cols[4]:
-        if st.button("⬇️", help="Download CSV"):
-            csv = users.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Download CSV",
-                csv,
-                "users.csv",
-                "text/csv",
-                key="users_download_real",
-            )
-
-    with cols[5]:
-        st.button("📊", help="(placeholder) Additional charts")
-
-    filtered = users.copy()
-    if has_orcid:
-        filtered = filtered[filtered["orcid_id"].astype(str).str.strip().ne("")]
-
-    if dept_choice != "All departments":
-        filtered = filtered[filtered["department"] == dept_choice]
-
-    selected_cols = st.session_state.get(customize_key)
-    if not selected_cols:
-        selected_cols = [
-            "name_or_title",
-            "department",
-            "osf_link",
-            "orcid_id",
-            "public_projects",
-            "private_projects",
-            "public_registration_count",
-            "embargoed_registration_count",
-            "published_preprint_count",
-            "public_file_count",
-            "storage_gb",
-            "created_date",
-            "modified_date",
-            "month_last_login",
-            "month_last_active",
-        ]
-    selected_cols = [c for c in selected_cols if c in filtered.columns]
-
-    return filtered, selected_cols
-
-
-def generic_toolbar(label: str, df: pd.DataFrame, customize_key: str, download_name: str):
-    cols = st.columns([4, 1.4, 0.9, 0.9])
-
-    with cols[0]:
-        st.markdown(
-            f"<span style='font-weight:600;color:{PRIMARY_BLUE};font-size:0.95rem;'>"
-            f"{len(df)} {label}</span>",
-            unsafe_allow_html=True,
-        )
-
-    with cols[1]:
-        with st.popover("Customize"):
-            st.write("Show columns")
-            all_possible = [c for c in df.columns if c not in ("row_type",)]
-            default = all_possible[:8]
-            selected = st.multiselect(
-                "",
-                options=all_possible,
-                default=default,
-                label_visibility="collapsed",
-                key=customize_key,
-            )
-
-    with cols[2]:
-        if st.button("⬇️", help="Download CSV", key=f"{download_name}_button"):
-            csv = df.to_csv(index=False).encode("utf-8")
-            st.download_button(
-                "Download CSV",
-                csv,
-                f"{download_name}.csv",
-                "text/csv",
-                key=f"{download_name}_download",
-            )
-
-    with cols[3]:
-        st.button("📊", help="(placeholder) Additional charts", key=f"{download_name}_charts")
-
-    selected_cols = st.session_state.get(customize_key) or [
-        c for c in df.columns if c not in ("row_type",)
-    ]
-    selected_cols = [c for c in selected_cols if c in df.columns]
-
-    return df, selected_cols
-
-
-# -------------------------------------------------------------------
-# Main
-# -------------------------------------------------------------------
-def main():
-    st.set_page_config(layout="wide", page_title="Institutions Dashboard (Demo)")
-
-    inject_css()
-
-    try:
-        df, summary_row, users, projects, registrations, preprints = load_data(DATA_FILE)
-    except Exception as exc:
-        st.error(f"Error loading data from {DATA_FILE}: {exc}")
+def chart_donut(labels: list[str], values: list[int], title: str):
+    d = pd.DataFrame({"label": labels, "value": values})
+    d = d[d["value"] > 0]
+    if d.empty:
+        st.markdown(f"<div class='osfi-card'><div class='section-title'>{title}</div><div class='small-muted'>No data</div></div>", unsafe_allow_html=True)
         return
 
-    # Branding header
+    chart = (
+        alt.Chart(d)
+        .mark_arc(innerRadius=80, outerRadius=120)
+        .encode(theta="value:Q", color=alt.Color("label:N", legend=alt.Legend(title=None)))
+        .properties(height=280)
+    )
+    st.markdown(f"<div class='osfi-card'><div class='section-title'>{title}</div>", unsafe_allow_html=True)
+    st.altair_chart(chart, width="stretch")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+def chart_bar_top10(df: pd.DataFrame, col: str, title: str):
+    if col not in df.columns:
+        st.markdown(f"<div class='osfi-card'><div class='section-title'>{title}</div><div class='small-muted'>Missing column: {col}</div></div>", unsafe_allow_html=True)
+        return
+    s = df[col].replace("", "Unknown")
+    top = s.value_counts().head(10).reset_index()
+    top.columns = ["label", "count"]
+    chart = (
+        alt.Chart(top)
+        .mark_bar()
+        .encode(
+            x=alt.X("label:N", sort="-y", title=None, axis=alt.Axis(labelAngle=0)),
+            y=alt.Y("count:Q", title=None),
+            tooltip=["label", "count"],
+        )
+        .properties(height=260)
+    )
+    st.markdown(f"<div class='osfi-card'><div class='section-title'>{title}</div>", unsafe_allow_html=True)
+    st.altair_chart(chart, width="stretch")
+    st.markdown("</div>", unsafe_allow_html=True)
+
+# -----------------------------
+# Pages
+# -----------------------------
+def render_branding(summary_row: pd.Series):
+    name = str(summary_row.get("branding_institution_name", "")).strip() or "Institution"
+    logo = str(summary_row.get("branding_institution_logo_url", "")).strip()
+    report_month = str(summary_row.get("report_month", "")).strip() or str(summary_row.get("report_yearmonth", "")).strip()
+
+    st.markdown("<div class='osfi-brand'>", unsafe_allow_html=True)
+    if logo:
+        st.markdown(f"<img src='{logo}' alt='logo'/>", unsafe_allow_html=True)
+    st.markdown(
+        f"<div><div class='title'>{name}</div>"
+        f"<div class='subtitle'>Institutions Dashboard (Demo){(' • Report month: ' + report_month) if report_month else ''}</div></div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+def render_summary(df: pd.DataFrame, summary_row: pd.Series):
+    # Totals that must be computed from tables
+    preprints_total = (df["row_type"] == "preprint").sum()
+    public_file_count = df.loc[df["row_type"].isin(["project", "registration", "preprint"]), "public_file_count"].apply(_to_int).sum() if "public_file_count" in df.columns else 0
+    storage_gb_total = df.loc[df["row_type"].isin(["project", "registration", "preprint"]), "storage_gb"].apply(_to_float).sum() if "storage_gb" in df.columns else 0.0
+
+    # Totals that must come from summary write-ins (privacy-sensitive)
+    projects_public = _to_int(summary_row.get("projects_public_count", "0"))
+    projects_private = _to_int(summary_row.get("projects_private_count", "0"))
+    regs_public = _to_int(summary_row.get("registrations_public_count", "0"))
+    regs_embargo = _to_int(summary_row.get("registrations_embargoed_count", "0"))
+
+    # Other summary metrics
+    total_users = _to_int(summary_row.get("summary_total_users", "0"))
+    monthly_logged_in = _to_int(summary_row.get("summary_monthly_logged_in_users", "0"))
+    monthly_active = _to_int(summary_row.get("summary_monthly_active_users", "0"))
+
+    # Metric cards grid
+    cards = [
+        ("Total Users", total_users),
+        ("Total Monthly Logged in Users", monthly_logged_in),
+        ("Total Monthly Active Users", monthly_active),
+        ("OSF Public and Private Projects", projects_public + projects_private),
+        ("OSF Public and Embargoed Registrations", regs_public + regs_embargo),
+        ("OSF Preprints", preprints_total),
+        ("Total Public File Count", public_file_count),
+        ("Total Storage in GB", round(storage_gb_total, 1)),
+    ]
+
+    st.markdown("<div class='osfi-card'>", unsafe_allow_html=True)
+    cols = st.columns(4, gap="large")
+    for i, (label, val) in enumerate(cards):
+        with cols[i % 4]:
+            st.markdown(
+                "<div class='metric-wrap'>"
+                f"<div class='metric-circle'>{val}</div>"
+                f"<div class='metric-label'>{label}</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+
+    # Charts row
+    c1, c2, c3 = st.columns(3, gap="large")
+    with c1:
+        # Total OSF Objects donut EXCLUDING users
+        labels = ["Public registrations", "Embargoed registrations", "Public projects", "Private projects", "Preprints"]
+        values = [regs_public, regs_embargo, projects_public, projects_private, preprints_total]
+        chart_donut(labels, values, "Total OSF Objects")
+    with c2:
+        proj = df[df["row_type"] == "project"]
+        chart_bar_top10(proj, "license", "Top 10 Licenses")
+    with c3:
+        proj = df[df["row_type"] == "project"]
+        chart_bar_top10(proj, "add_ons", "Top 10 Add-ons")
+
+    # Second row of donuts (department/users removed) -> keep storage regions if present
+    if "storage_region" in df.columns:
+        st.markdown("<div style='height:14px'></div>", unsafe_allow_html=True)
+        c4 = st.columns(3, gap="large")[0]
+        with c4:
+            ent = df[df["row_type"].isin(["project", "registration", "preprint"])]
+            sr = ent["storage_region"].replace("", "Unknown")
+            top = sr.value_counts().head(10)
+            chart_donut(top.index.tolist(), top.values.tolist(), "Top Storage Regions")
+
+def render_entity_tab(df_all: pd.DataFrame, row_type: str, title: str, page_key: str):
+    df = df_all[df_all["row_type"] == row_type].copy()
+
+    st.markdown(f"<div class='kpi-title'>{len(df)} {title}</div>", unsafe_allow_html=True)
+
+    # Controls aligned right
+    left, right = st.columns([5, 7], gap="large")
+    with right:
+        st.markdown("<div class='controls-row'>", unsafe_allow_html=True)
+
+    # Filter controls row (right aligned using columns)
+    c_has, c_dept, c_filters, c_custom, c_dl = st.columns([1.4, 2.2, 1.3, 1.3, 1.8])
+
+    filters = {}
+
+    # Only show Department + Has ORCID if those columns exist (Users tab removed; keep for future-proofing)
+    with c_has:
+        if "orcid_id" in df.columns:
+            has_orcid = st.checkbox("Has ORCID", value=False, key=f"{page_key}_has_orcid")
+            if has_orcid:
+                df = df[df["orcid_id"].astype(str).str.strip() != ""]
+    with c_dept:
+        if "department" in df.columns:
+            opts = ["All"] + sorted([x for x in df["department"].replace("", "N/A").unique().tolist() if x])
+            dept = st.selectbox("All departments", opts, index=0, key=f"{page_key}_dept")
+            if dept != "All":
+                df = df[df["department"].replace("", "N/A") == dept]
+
+    with c_filters:
+        with st.expander("Filters", expanded=False):
+            if "resource_type" in df.columns:
+                rt = st.selectbox("Resource Type", ["All"] + sorted([x for x in df["resource_type"].replace("", "Unknown").unique().tolist() if x]), 0, key=f"{page_key}_rt")
+                if rt != "All":
+                    filters["resource_type"] = rt
+            if "license" in df.columns:
+                lic = st.selectbox("License", ["All"] + sorted([x for x in df["license"].replace("", "Unknown").unique().tolist() if x]), 0, key=f"{page_key}_lic")
+                if lic != "All":
+                    filters["license"] = lic
+            if "storage_region" in df.columns:
+                sr = st.selectbox("Storage Region", ["All"] + sorted([x for x in df["storage_region"].replace("", "Unknown").unique().tolist() if x]), 0, key=f"{page_key}_sr")
+                if sr != "All":
+                    filters["storage_region"] = sr
+
+    with c_custom:
+        with st.expander("Customize", expanded=False):
+            # Define default columns per tab
+            default_cols = {
+                "project": ["name_or_title","osf_link","created_date","modified_date","doi","license","resource_type","add_ons","storage_region","storage_gb","views_last_30_days","downloads_last_30_days","report_yearmonth"],
+                "registration": ["name_or_title","osf_link","created_date","modified_date","doi","license","resource_type","storage_region","storage_gb","views_last_30_days","downloads_last_30_days","report_yearmonth"],
+                "preprint": ["name_or_title","osf_link","created_date","modified_date","doi","license","resource_type","storage_region","storage_gb","views_last_30_days","downloads_last_30_days","report_yearmonth"],
+            }
+            all_cols = [c for c in default_cols.get(row_type, df.columns.tolist()) if c in df.columns]
+            selected = st.multiselect("Columns", options=df.columns.tolist(), default=all_cols, key=f"{page_key}_cols")
+    with c_dl:
+        st.download_button(
+            "Download CSV",
+            data=df.to_csv(index=False),
+            file_name=f"{row_type}s.csv",
+            mime="text/csv",
+            key=f"{page_key}_dl",
+        )
+
+    df = apply_filters(df, filters)
+
+    # Build display dataframe (respect customize selection)
+    selected_cols = st.session_state.get(f"{page_key}_cols", [])
+    if not selected_cols:
+        selected_cols = [c for c in df.columns if c != "row_type"]
+    display = build_display_df(df, selected_cols)
+
+    # Pagination BELOW the table (as requested)
+    page_df, page, total_pages = paginate(display, f"{page_key}_page", page_size=25)
+
+    st.dataframe(
+        page_df,
+        width="stretch",
+        height=520,
+        hide_index=True,
+        column_config=column_config_for(page_df),
+    )
+
+    # Pagination controls
+    pcol1, pcol2, pcol3, pcol4, pcol5 = st.columns([1,1,2,1,1])
+    with pcol1:
+        if st.button("«", key=f"{page_key}_first"):
+            st.session_state[f"{page_key}_page"] = 1
+            st.rerun()
+    with pcol2:
+        if st.button("‹", key=f"{page_key}_prev"):
+            st.session_state[f"{page_key}_page"] = max(1, page - 1)
+            st.rerun()
+    with pcol3:
+        st.markdown(f"<div class='small-muted' style='text-align:center'>Page {page} of {total_pages}</div>", unsafe_allow_html=True)
+    with pcol4:
+        if st.button("›", key=f"{page_key}_next"):
+            st.session_state[f"{page_key}_page"] = min(total_pages, page + 1)
+            st.rerun()
+    with pcol5:
+        if st.button("»", key=f"{page_key}_last"):
+            st.session_state[f"{page_key}_page"] = total_pages
+            st.rerun()
+
+# -----------------------------
+# App
+# -----------------------------
+def main():
+    st.set_page_config(page_title="OSF Institutions Dashboard (Demo)", layout="wide")
+    st.markdown(CSS, unsafe_allow_html=True)
+
+    data_file = st.sidebar.text_input("Data file", value=DEFAULT_DATA_FILE)
+    df, summary_row = load_data(data_file)
+
     render_branding(summary_row)
 
-    tabs = st.tabs(["Summary", "Users", "Projects", "Registrations", "Preprints"])
-
-    # Summary
+    tabs = st.tabs(["Summary", "Projects", "Registrations", "Preprints"])
     with tabs[0]:
-        render_summary_tab(summary_row, users, projects, registrations, preprints)
-
-    # Users
+        render_summary(df, summary_row)
     with tabs[1]:
-        st.markdown("### Users")
-        filtered_users, user_cols = users_toolbar(users)
-        render_table(
-            filtered_users,
-            page_key="users_page",
-            columns_to_show=user_cols,
-            link_columns=["osf_link", "creator_orcid"],
-        )
-
-    # Projects
+        render_entity_tab(df, "project", "Projects", "projects")
     with tabs[2]:
-        st.markdown("### Projects")
-        filtered_projects, proj_cols = generic_toolbar(
-            "Projects", projects, "projects_customize_cols", "projects"
-        )
-        render_table(
-            filtered_projects,
-            page_key="projects_page",
-            columns_to_show=proj_cols,
-            link_columns=["osf_link"],
-        )
-
-    # Registrations
+        render_entity_tab(df, "registration", "Registrations", "registrations")
     with tabs[3]:
-        st.markdown("### Registrations")
-        filtered_regs, reg_cols = generic_toolbar(
-            "Registrations", registrations, "registrations_customize_cols", "registrations"
-        )
-        render_table(
-            filtered_regs,
-            page_key="registrations_page",
-            columns_to_show=reg_cols,
-            link_columns=["osf_link"],
-        )
-
-    # Preprints
-    with tabs[4]:
-        st.markdown("### Preprints")
-        filtered_preprints, pre_cols = generic_toolbar(
-            "Preprints", preprints, "preprints_customize_cols", "preprints"
-        )
-        render_table(
-            filtered_preprints,
-            page_key="preprints_page",
-            columns_to_show=pre_cols,
-            link_columns=["osf_link", "doi"],
-        )
-
+        render_entity_tab(df, "preprint", "Preprints", "preprints")
 
 if __name__ == "__main__":
     main()
