@@ -1,5 +1,8 @@
 import math
 from pathlib import Path
+import base64
+from urllib.request import Request, urlopen
+from urllib.error import URLError
 
 import altair as alt
 import pandas as pd
@@ -244,19 +247,72 @@ def chart_bar_top10(df: pd.DataFrame, col: str, title: str):
 # Pages
 # -----------------------------
 def render_branding(summary_row: pd.Series):
-    name = str(summary_row.get("branding_institution_name", "")).strip() or "Institution"
-    logo = str(summary_row.get("branding_institution_logo_url", "")).strip()
-    report_month = str(summary_row.get("report_month", "")).strip() or str(summary_row.get("report_yearmonth", "")).strip()
+    """Render the header/branding block.
 
-    st.markdown("<div class='osfi-brand'>", unsafe_allow_html=True)
-    if logo:
-        st.markdown(f"<img src='{logo}' alt='logo'/>", unsafe_allow_html=True)
-    st.markdown(
-        f"<div><div class='title'>{name}</div>"
-        f"<div class='subtitle'>Institutions Dashboard (Demo){(' • Report month: ' + report_month) if report_month else ''}</div></div>",
-        unsafe_allow_html=True,
+    We avoid relying on <img src=...> inside HTML because Streamlit deployments may apply CSP rules
+    that prevent the browser from directly loading external images, particularly SVGs.
+    Instead we fetch the logo server-side when possible and fall back to an embedded SVG.
+    """
+
+    name = str(summary_row.get("branding_institution_name", "")).strip() or "Institution"
+    logo_url = str(summary_row.get("branding_institution_logo_url", "")).strip()
+    report_month = (
+        str(summary_row.get("report_month", "")).strip()
+        or str(summary_row.get("report_yearmonth", "")).strip()
     )
-    st.markdown("</div>", unsafe_allow_html=True)
+
+    COS_SVG = (
+        "<?xml version='1.0' encoding='UTF-8'?>"
+        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
+        "<circle cx='32' cy='32' r='30' fill='#2d6cc0'/>"
+        "<circle cx='32' cy='32' r='16' fill='#ffffff' opacity='0.9'/>"
+        "<circle cx='32' cy='32' r='7' fill='#2d6cc0'/>"
+        "</svg>"
+    ).encode("utf-8")
+
+    def _fetch_bytes(url: str) -> bytes | None:
+        if not url:
+            return None
+        try:
+            req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
+            with urlopen(req, timeout=10) as resp:
+                return resp.read()
+        except URLError:
+            return None
+        except Exception:
+            return None
+
+    logo_bytes = _fetch_bytes(logo_url) if logo_url else None
+    if not logo_bytes and logo_url:
+        # Some servers block unknown agents; try one more time with minimal headers.
+        logo_bytes = _fetch_bytes(logo_url)
+    if not logo_bytes:
+        logo_bytes = COS_SVG
+
+    # Layout using Streamlit columns; CSS handles spacing and font styling.
+    left, right = st.columns([0.08, 0.92], gap="small")
+    with left:
+        # Streamlit's image renderer can be finicky with SVG bytes; handle SVG explicitly.
+        try:
+            if b"<svg" in logo_bytes[:500].lower():
+                b64 = base64.b64encode(logo_bytes).decode("ascii")
+                st.markdown(
+                    f"<img src='data:image/svg+xml;base64,{b64}' width='44' height='44' alt='logo' />",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.image(logo_bytes, width=44)
+        except Exception:
+            st.markdown("<div class='osfi-logo-fallback'>COS</div>", unsafe_allow_html=True)
+
+    with right:
+        st.markdown(
+            f"<div class='osfi-brand-text'>"
+            f"<div class='title'>{name}</div>"
+            f"<div class='subtitle'>Institutions Dashboard (Demo){(' • Report month: ' + report_month) if report_month else ''}</div>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
 
 def render_summary(df: pd.DataFrame, summary_row: pd.Series):
     # Totals that must be computed from tables
