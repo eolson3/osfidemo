@@ -1,5 +1,5 @@
 row_type,name_or_title,osf_link,created_date,modified_date,doi,storage_region,storage_byte_count,storage_gb,views_last_30_days,downloads_last_30_days,license,resource_type,add_ons,report_yearmonth,branding_institution_name,branding_institution_logo_url,report_month,projects_public_count,projects_private_count,registrations_public_count,registrations_embargoed_count,summary_monthly_logged_in_users,summary_monthly_active_users,published_preprint_count
-summary,,,,,,,,,,,,,,,Center For Open Science [Test],https://osf.io/static/img/cos-white.svg,2025-11,293,0,559,0,,,
+summary,,,,,,,,,,,,,,,Center For Open Science [Test],https://upload.wikimedia.org/wikipedia/commons/thumb/d/d9/Open_Science_Framework_log_%28and_Center_for_Open_Science_logo%29.svg/960px-Open_Science_Framework_log_%28and_Center_for_Open_Science_logo%29.svg.png?20240113115845,2025-11,293,0,559,0,,,
 project,component files,https://test.osf.io/cj8wg,2024-10-17,2024-10-17,,United States,47657.0,4.438403993844986e-05,1.0,,CC-By Attribution-ShareAlike 4.0 International,,,,,,,,,,,,,
 project,Cognitive Load and Task Switching in Online Learning,https://test.osf.io/2g735,2025-09-17,2025-11-25,,United States,2097128.0,0.0019531026482582092,3.0,,CC0 1.0 Universal,,,,,,,,,,,,,
 project,VRL - UAT Hotfix Check,https://test.osf.io/mjfeb,2025-07-10,2025-07-10,,United States,0.0,0.0,,,,,,,,,,,,,,,,
