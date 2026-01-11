@@ -1,12 +1,14 @@
-"""OSF Institutions Dashboard (Demo)
+# dashboard_v7.py
+# OSF Institutions Dashboard (Demo) - Streamlit
+# - No file upload UX (expects a CSV in repo / path)
+# - Robust CSV parsing (row_type + summary counts)
+# - Branding header rendering (logo + institution name + report month)
+# - Customize popover uses checkboxes for REAL columns only
+# - OSF Link / DOI rendered as GUID/DOI text (not "Open")
 
-This version removes the CSV upload widget, fixes Summary rendering (no raw HTML output),
-limits Customize to real per-tab columns, and renders OSF Link/DOI as GUID/DOI text
-(not generic 'Open').
+from __future__ import annotations
 
-Expected input CSV: same directory as this script by default.
-"""
-
+import os
 import re
 from pathlib import Path
 from typing import Dict, List, Tuple
@@ -14,529 +16,531 @@ from typing import Dict, List, Tuple
 import pandas as pd
 import streamlit as st
 
-# -----------------------------------------------------------------------------
+
+# -----------------------------
 # Configuration
-# -----------------------------------------------------------------------------
-DEFAULT_DATA_FILE = "osfi_dashboard_data_v5_no_users_tab.csv"  # keep in repo root next to dashboard.py
+# -----------------------------
 
-# Per-tab columns (only show these if present in the CSV)
-PROJECT_COLS = [
-    "name_or_title",
-    "osf_link",
-    "created_date",
-    "modified_date",
-    "storage_region",
-    "storage_gb",
-    "views_last_30_days",
-    "downloads_last_30_days",
-    "license",
-    "resource_type",
-    "add_ons",
-    "funder_name",
-]
-REG_COLS = [
-    "name_or_title",
-    "osf_link",
-    "created_date",
-    "modified_date",
-    "doi",
-    "storage_region",
-    "storage_gb",
-    "views_last_30_days",
-    "downloads_last_30_days",
-    "license",
-    "resource_type",
-    "add_ons",
-    "funder_name",
-]
-PREPRINT_COLS = [
-    "name_or_title",
-    "osf_link",
-    "created_date",
-    "modified_date",
-    "doi",
-    "license",
-    "resource_type",
-    "views_last_30_days",
-    "downloads_last_30_days",
-]
+DEFAULT_DATA_FILE = os.environ.get("OSFI_DASHBOARD_CSV", "osfi_dashboard_data.csv")
 
-TAB_COLUMNS: Dict[str, List[str]] = {
-    "project": PROJECT_COLS,
-    "registration": REG_COLS,
-    "preprint": PREPRINT_COLS,
+TABS = ["Summary", "Projects", "Registrations", "Preprints"]
+
+# Column sets per entity tab (only show these by default; Customize can toggle within this universe)
+ENTITY_COLUMNS: Dict[str, List[str]] = {
+    "project": [
+        "name_or_title",
+        "osf_link",
+        "created_date",
+        "modified_date",
+        "doi",
+        "storage_region",
+        "storage_gb",
+        "views_last_30_days",
+        "downloads_last_30_days",
+        "license",
+        "resource_type",
+        "add_ons",
+        "funder_name",
+    ],
+    "registration": [
+        "name_or_title",
+        "osf_link",
+        "created_date",
+        "modified_date",
+        "doi",
+        "storage_region",
+        "storage_gb",
+        "views_last_30_days",
+        "downloads_last_30_days",
+        "license",
+        "resource_type",
+        "add_ons",
+        "funder_name",
+    ],
+    "preprint": [
+        "name_or_title",
+        "osf_link",
+        "created_date",
+        "modified_date",
+        "doi",
+        "storage_region",
+        "storage_gb",
+        "views_last_30_days",
+        "downloads_last_30_days",
+        "license",
+        "resource_type",
+        "funder_name",
+    ],
 }
 
-# Filters that should exist on each tab
-TAB_FILTERS: Dict[str, List[str]] = {
+# Filter controls per entity
+ENTITY_FILTERS: Dict[str, List[str]] = {
     "project": ["resource_type", "license", "storage_region"],
     "registration": ["resource_type", "license", "storage_region"],
-    "preprint": ["resource_type", "license"],
+    "preprint": ["resource_type", "license", "storage_region"],
 }
 
-# -----------------------------------------------------------------------------
-# Styling
-# -----------------------------------------------------------------------------
+# Branding fields (embedded in summary row in your CSV)
+BRANDING_FIELDS = [
+    "branding_institution_name",
+    "branding_institution_logo_url",
+    "report_month",
+]
+
+
+# -----------------------------
+# Utilities
+# -----------------------------
+
+def _norm_col(c: str) -> str:
+    c = c.strip()
+    c = re.sub(r"\s+", "_", c)
+    return c.lower()
+
+
+def _as_int(x) -> int:
+    try:
+        if x is None:
+            return 0
+        s = str(x).strip()
+        if s == "":
+            return 0
+        # allow commas
+        s = s.replace(",", "")
+        return int(float(s))
+    except Exception:
+        return 0
+
+
+def _as_float(x) -> float:
+    try:
+        if x is None:
+            return 0.0
+        s = str(x).strip()
+        if s == "":
+            return 0.0
+        s = s.replace(",", "")
+        return float(s)
+    except Exception:
+        return 0.0
+
+
+def _extract_guid(value: str) -> str:
+    """Return a short OSF GUID from a field that may be a GUID or URL."""
+    if value is None:
+        return ""
+    s = str(value).strip()
+    if s == "" or s.lower() in {"none", "nan"}:
+        return ""
+    # common: "kr68a" or "https://osf.io/kr68a/" or ".../preprints/.../abcd/"
+    parts = re.split(r"[\/\s]+", s)
+    parts = [p for p in parts if p]
+    if not parts:
+        return s
+    cand = parts[-1]
+    # sometimes trailing _v2 etc; keep base guid-like token
+    cand = cand.split("?")[0].split("#")[0]
+    cand = cand.split("_")[0]
+    return cand
+
+
+def _doi_url(doi: str) -> str:
+    d = str(doi).strip()
+    if d == "" or d.lower() in {"none", "nan"}:
+        return ""
+    # remove leading resolver if present
+    d = re.sub(r"^https?://(dx\.)?doi\.org/", "", d, flags=re.I)
+    return f"https://doi.org/{d}"
+
+
+def _is_truthy(x: str) -> bool:
+    return str(x).strip().lower() in {"1", "true", "t", "yes", "y"}
+
+
+# -----------------------------
+# Data loading
+# -----------------------------
+
+@st.cache_data(show_spinner=False)
+def load_data(path: str) -> Tuple[pd.DataFrame, Dict[str, str], pd.Series, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    p = Path(path)
+    if not p.exists():
+        raise FileNotFoundError(f"CSV not found at: {p.resolve()}")
+
+    df = pd.read_csv(p, dtype=str).fillna("")
+    # normalize column names
+    df.columns = [_norm_col(c) for c in df.columns]
+
+    if "row_type" not in df.columns:
+        raise ValueError("CSV must include a 'row_type' column (summary/project/registration/preprint).")
+
+    # normalize row_type values
+    df["row_type"] = df["row_type"].astype(str).str.strip().str.lower()
+
+    # summary row
+    summary_df = df[df["row_type"] == "summary"]
+    if summary_df.empty:
+        # allow: infer summary by taking first row if it has branding/summary fields
+        summary_row = pd.Series(dtype=str)
+    else:
+        summary_row = summary_df.iloc[0]
+
+    # branding comes from summary row fields
+    branding = {}
+    for k in BRANDING_FIELDS:
+        if k in df.columns and not summary_df.empty:
+            branding[k] = str(summary_row.get(k, "")).strip()
+        else:
+            branding[k] = ""
+
+    projects = df[df["row_type"] == "project"].copy()
+    registrations = df[df["row_type"] == "registration"].copy()
+    preprints = df[df["row_type"] == "preprint"].copy()
+
+    return df, branding, summary_row, projects, registrations, preprints
+
+
+def compute_summary_counts(summary_row: pd.Series, projects: pd.DataFrame, registrations: pd.DataFrame, preprints: pd.DataFrame) -> Dict[str, float]:
+    """Prefer explicit summary_* fields when present; otherwise compute from entity tables."""
+    out: Dict[str, float] = {}
+
+    # Users counts (may be absent since no users tab)
+    out["total_users"] = _as_int(summary_row.get("total_users", "0")) if isinstance(summary_row, pd.Series) else 0
+    out["monthly_logged_in_users"] = _as_int(summary_row.get("summary_monthly_logged_in_users", "0")) if isinstance(summary_row, pd.Series) else 0
+    out["monthly_active_users"] = _as_int(summary_row.get("summary_monthly_active_users", "0")) if isinstance(summary_row, pd.Series) else 0
+
+    # Entity totals from the tables (per your requirement)
+    out["projects"] = float(len(projects))
+    out["registrations"] = float(len(registrations))
+    out["preprints"] = float(len(preprints))
+
+    # Total public file count / storage should be totals from the tables
+    def _col_numeric_sum(frame: pd.DataFrame, col: str) -> float:
+        if col not in frame.columns:
+            return 0.0
+        s = pd.to_numeric(frame[col], errors="coerce")
+        s = s.fillna(0)
+        return float(s.sum())
+
+    out["total_public_file_count"] = (
+        _col_numeric_sum(projects, "public_file_count")
+        + _col_numeric_sum(registrations, "public_file_count")
+        + _col_numeric_sum(preprints, "public_file_count")
+    )
+
+    # storage_gb may exist; otherwise compute from bytes
+    total_storage_gb = _col_numeric_sum(projects, "storage_gb") + _col_numeric_sum(registrations, "storage_gb") + _col_numeric_sum(preprints, "storage_gb")
+    if total_storage_gb == 0.0:
+        total_storage_bytes = _col_numeric_sum(projects, "storage_byte_count") + _col_numeric_sum(registrations, "storage_byte_count") + _col_numeric_sum(preprints, "storage_byte_count")
+        total_storage_gb = total_storage_bytes / (1024**3)
+    out["total_storage_gb"] = float(total_storage_gb)
+
+    return out
+
+
+# -----------------------------
+# UI helpers
+# -----------------------------
 
 def inject_css() -> None:
     st.markdown(
         """
 <style>
-:root {
-  --osfi-bg: #F3F8FC;
-  --osfi-card: #FFFFFF;
-  --osfi-border: #E6EEF6;
-  --osfi-text: #22313F;
-  --osfi-muted: #6B7C93;
-  --osfi-link: #2E6DAD;
-  --osfi-accent: #F04B4C;
+/* Remove Streamlit default top padding so branding isn't cut off */
+.block-container { padding-top: 1.2rem; padding-bottom: 2rem; }
+
+/* Branding header */
+.osfi-brand-wrap{
+  display:flex; align-items:center; gap:14px;
+  padding: 8px 0 10px 0;
+}
+.osfi-logo{
+  width:44px; height:44px; border-radius: 6px;
+  display:flex; align-items:center; justify-content:center;
+  overflow:hidden;
+}
+.osfi-logo img{ width:44px; height:44px; object-fit:contain; }
+.osfi-inst-name{
+  font-size: 34px; font-weight: 700; color:#243447; line-height: 1.05;
+}
+.osfi-report{
+  font-size: 14px; color:#6b7785; margin-top: 6px;
+}
+.osfi-tabs-hr{ border-top: 1px solid #e6eaef; margin: 8px 0 16px 0; }
+
+/* Right-aligned toolbar */
+.osfi-toolbar{
+  display:flex; justify-content:flex-end; gap:10px; align-items:center;
+  margin: 6px 0 10px 0;
 }
 
-.stApp {
-  background: var(--osfi-bg);
+/* Summary cards */
+.osfi-cards{
+  display:grid; grid-template-columns: repeat(4, minmax(160px, 1fr));
+  gap:14px; margin-top: 8px;
+}
+@media (max-width: 1100px){
+  .osfi-cards{ grid-template-columns: repeat(2, minmax(160px, 1fr)); }
+}
+.osfi-card{
+  background:#ffffff; border:1px solid #e6eaef; border-radius:10px;
+  padding:14px 14px 12px 14px;
+}
+.osfi-card-label{ font-size: 12px; color:#6b7785; margin-bottom: 6px; }
+.osfi-card-value{ font-size: 22px; font-weight: 700; color:#243447; }
+
+.osfi-section-title{
+  font-size: 18px; font-weight: 700; margin: 18px 0 6px 0; color:#243447;
 }
 
-/* Make tabs look more like the OSF dashboard */
-.stTabs [data-baseweb="tab-list"] {
-  gap: 20px;
-}
-.stTabs [data-baseweb="tab"] {
-  height: 48px;
-  padding: 0 10px;
-}
-.stTabs [aria-selected="true"] {
-  border-bottom: 2px solid var(--osfi-accent) !important;
-  color: var(--osfi-accent) !important;
-}
+/* Streamlit popover button alignment */
+div[data-testid="stPopoverButton"] > button { height: 40px; }
 
-/* Summary metrics */
-div[data-testid="stMetric"] {
-  background: var(--osfi-card);
-  border: 1px solid var(--osfi-border);
-  border-radius: 10px;
-  padding: 14px 16px;
-}
-div[data-testid="stMetric"] label {
-  color: var(--osfi-muted) !important;
-}
-
-/* Control row */
-.osfi-controls {
-  display: flex;
-  justify-content: flex-end;
-  gap: 12px;
-  align-items: center;
-}
-
-/* Simple table wrapper */
-.osfi-table-wrap {
-  background: var(--osfi-card);
-  border: 1px solid var(--osfi-border);
-  border-radius: 10px;
-  padding: 0;
-  overflow: hidden;
-}
-
-.osfi-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 14px;
-}
-.osfi-table thead th {
-  text-align: left;
-  color: var(--osfi-text);
-  font-weight: 600;
-  background: #FFFFFF;
-  border-bottom: 1px solid var(--osfi-border);
-  padding: 12px 12px;
-  white-space: nowrap;
-}
-.osfi-table tbody td {
-  padding: 12px 12px;
-  border-bottom: 1px solid var(--osfi-border);
-  color: var(--osfi-text);
-  vertical-align: middle;
-}
-.osfi-table tbody tr:nth-child(odd) td {
-  background: #F7FBFF;
-}
-
-.osfi-link a {
-  color: var(--osfi-link);
-  text-decoration: none;
-  font-weight: 600;
-}
-
-/* Pagination */
-.osfi-pagination {
-  display: flex;
-  justify-content: flex-end;
-  gap: 8px;
-  align-items: center;
-  padding: 10px 0 0 0;
-}
-
+/* Make markdown links in dataframe look like OSF links */
+a { text-decoration: none; }
 </style>
-""",
+        """,
         unsafe_allow_html=True,
     )
 
 
-# -----------------------------------------------------------------------------
-# Helpers
-# -----------------------------------------------------------------------------
+def render_branding(branding: Dict[str, str]) -> None:
+    inst = (branding.get("branding_institution_name") or "").strip() or "Center For Open Science [Test]"
+    logo = (branding.get("branding_institution_logo_url") or "").strip()
+    report_month = (branding.get("report_month") or "").strip() or (branding.get("report_month") or "").strip()
+    if not report_month:
+        # sometimes present as report_yearmonth in summary row; not available here
+        report_month = "2025-11"
 
-def _normalize_cols(cols: List[str]) -> List[str]:
-    return [re.sub(r"\s+", "_", c.strip().lower()) for c in cols]
+    # Fallback logo (COS)
+    fallback = "https://osf.io/static/img/cos-white.svg"
+    logo_url = logo if logo else fallback
 
-
-def _as_int(val: str) -> int:
-    try:
-        return int(float(val))
-    except Exception:
-        return 0
-
-
-def _as_float(val: str) -> float:
-    try:
-        return float(val)
-    except Exception:
-        return 0.0
-
-
-def extract_osf_guid(value: str) -> str:
-    if not value:
-        return ""
-    v = str(value).strip()
-    # If it's already a bare GUID
-    if re.fullmatch(r"[a-z0-9]{5}", v, flags=re.IGNORECASE):
-        return v.lower()
-    # Pull guid from URLs like https://osf.io/kr68a/ or .../registrations/kr68a
-    m = re.search(r"/([a-z0-9]{5})(?:[_/]|$)", v, flags=re.IGNORECASE)
-    if m:
-        return m.group(1).lower()
-    return ""
+    # Use components.html so HTML isn't echoed as code
+    html = f"""
+<div class="osfi-brand-wrap">
+  <div class="osfi-logo">
+    <img src="{logo_url}" alt="logo" onerror="this.onerror=null;this.src='{fallback}';" />
+  </div>
+  <div class="osfi-brand-text">
+    <div class="osfi-inst-name">{inst}</div>
+    <div class="osfi-report">Institutions Dashboard (Demo) • Report month: {report_month}</div>
+  </div>
+</div>
+<div class="osfi-tabs-hr"></div>
+"""
+    st.components.v1.html(html, height=92)
 
 
-def normalize_doi(value: str) -> str:
-    if not value:
-        return ""
-    v = str(value).strip()
-    v = re.sub(r"^https?://(dx\.)?doi\.org/", "", v, flags=re.IGNORECASE)
-    v = re.sub(r"^doi:\s*", "", v, flags=re.IGNORECASE)
-    return v.strip()
-
-
-def make_osf_url(guid_or_url: str) -> str:
-    guid = extract_osf_guid(guid_or_url)
-    if guid:
-        return f"https://osf.io/{guid}/"
-    # If it's already a URL, return as-is
-    if str(guid_or_url).startswith("http"):
-        return str(guid_or_url)
-    return ""
-
-
-def make_doi_url(doi_or_url: str) -> str:
-    doi = normalize_doi(doi_or_url)
-    return f"https://doi.org/{doi}" if doi else ""
-
-
-# -----------------------------------------------------------------------------
-# Data loading
-# -----------------------------------------------------------------------------
-
-@st.cache_data(show_spinner=False)
-def load_data(path: str) -> Tuple[pd.DataFrame, dict, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    df = pd.read_csv(path, dtype=str).fillna("")
-
-    # Normalize column names
-    original_cols = df.columns.tolist()
-    df.columns = _normalize_cols(original_cols)
-
-    if "row_type" not in df.columns:
-        raise ValueError("CSV must include a 'row_type' column.")
-
-    # Split out rows
-    branding_row = df[df["row_type"].str.lower() == "summary"].head(1)
-    summary_row = df[df["row_type"].str.lower() == "summary"].head(1)
-
-    projects = df[df["row_type"].str.lower() == "project"].copy()
-    registrations = df[df["row_type"].str.lower() == "registration"].copy()
-    preprints = df[df["row_type"].str.lower() == "preprint"].copy()
-
-    # Branding + summary
-    branding = {}
-    if not branding_row.empty:
-        r = branding_row.iloc[0].to_dict()
-        branding = {
-            "institution_name": r.get("branding_institution_name") or r.get("name_or_title") or "",
-            "logo_url": r.get("branding_institution_logo_url") or "",
-            "report_month": r.get("report_month") or r.get("report_yearmonth") or "",
-        }
-
-    summary = {}
-    if not summary_row.empty:
-        r = summary_row.iloc[0].to_dict()
-        summary = {
-            "total_users": _as_int(r.get("total_users", "0")),
-            "monthly_logged_in": _as_int(r.get("summary_monthly_logged_in_users", "0")),
-            "monthly_active": _as_int(r.get("summary_monthly_active_users", "0")),
-            # Table-derived totals (preferred)
-            "projects_total": len(projects),
-            "registrations_total": len(registrations),
-            "preprints_total": len(preprints),
-            "public_file_total": sum(_as_int(x) for x in pd.to_numeric(projects.get("public_file_count", "0"), errors="coerce").fillna(0).tolist()),
-            "storage_gb_total": sum(_as_float(x) for x in pd.to_numeric(projects.get("storage_gb", "0"), errors="coerce").fillna(0).tolist()),
-        }
-
-    return df, branding, summary, projects, registrations, preprints
-
-
-# -----------------------------------------------------------------------------
-# UI components
-# -----------------------------------------------------------------------------
-
-
-def render_branding(branding: dict) -> None:
-    # Avoid brittle HTML rendering: use native components.
-    logo_url = branding.get("logo_url") or ""
-    inst_name = branding.get("institution_name") or ""
-    report_month = branding.get("report_month") or ""
-
-    c1, c2 = st.columns([0.08, 0.92])
-    with c1:
-        if logo_url:
-            try:
-                st.image(logo_url, width=44)
-            except Exception:
-                st.write("")
-    with c2:
-        st.markdown(f"### {inst_name}" if inst_name else "### Institutions Dashboard")
-        sub = "Institutions Dashboard (Demo)"
-        if report_month:
-            sub += f" • Report month: {report_month}"
-        st.caption(sub)
-
-
-def render_summary(summary: dict) -> None:
-    # Two rows of 4 metrics (similar layout)
-    row1 = st.columns(4)
-    row1[0].metric("Total users", f"{summary.get('total_users', 0):,}")
-    row1[1].metric("Monthly logged-in users", f"{summary.get('monthly_logged_in', 0):,}")
-    row1[2].metric("Monthly active users", f"{summary.get('monthly_active', 0):,}")
-    row1[3].metric("Projects", f"{summary.get('projects_total', 0):,}")
-
-    row2 = st.columns(4)
-    row2[0].metric("Registrations", f"{summary.get('registrations_total', 0):,}")
-    row2[1].metric("Preprints", f"{summary.get('preprints_total', 0):,}")
-    row2[2].metric("Total public file count", f"{summary.get('public_file_total', 0):,}")
-    row2[3].metric("Total storage (GB)", f"{summary.get('storage_gb_total', 0.0):,.1f}")
-
-
-def build_filters(entity_key: str, df_entity: pd.DataFrame) -> Tuple[pd.DataFrame, dict]:
-    """Return filtered df + selected filter values."""
-    selected = {}
-
-    filter_fields = TAB_FILTERS.get(entity_key, [])
-    if not filter_fields:
-        return df_entity, selected
-
-    with st.expander("Filters", expanded=False):
-        for field in filter_fields:
-            if field not in df_entity.columns:
-                continue
-            options = sorted([x for x in df_entity[field].unique().tolist() if x != ""])
-            label = field.replace("_", " ").title()
-            choice = st.selectbox(label, ["All"] + options, key=f"{entity_key}_flt_{field}")
-            selected[field] = choice
-
-    out = df_entity
-    for field, choice in selected.items():
-        if choice and choice != "All" and field in out.columns:
-            out = out[out[field] == choice]
-
-    return out, selected
+def _available_columns(frame: pd.DataFrame, entity_key: str) -> List[str]:
+    allowed = ENTITY_COLUMNS[entity_key]
+    return [c for c in allowed if c in frame.columns]
 
 
 def render_customize(entity_key: str, available_cols: List[str], default_cols: List[str]) -> List[str]:
-    """Checkbox-based column selector; returns selected columns."""
+    """Checkbox-based customize list; returns selected columns."""
+    state_key = f"{entity_key}_selected_cols"
+    if state_key not in st.session_state:
+        st.session_state[state_key] = [c for c in default_cols if c in available_cols]
 
-    # Streamlit popover is not available in some deployments; fall back to expander.
-    use_popover = hasattr(st, "popover")
-    selected = []
+    with st.popover("Customize", use_container_width=False):
+        st.markdown("**Columns**")
+        selected = []
+        for c in available_cols:
+            checked = c in st.session_state[state_key]
+            if st.checkbox(c, value=checked, key=f"{state_key}_{c}"):
+                selected.append(c)
+        # persist (preserve order from available_cols)
+        st.session_state[state_key] = [c for c in available_cols if c in selected]
 
-    if use_popover:
-        container = st.popover("Customize", key=f"{entity_key}_customize")
-    else:
-        container = st.expander("Customize", expanded=False)
-
-    with container:
-        st.caption("Columns")
-        for col in available_cols:
-            checked = col in default_cols
-            checked = st.checkbox(col.replace("_", " "), value=checked, key=f"{entity_key}_col_{col}")
-            if checked:
-                selected.append(col)
-
-    # Safety: if user deselects everything, keep at least one
-    if not selected:
-        selected = default_cols[:1] if default_cols else available_cols[:1]
-
-    return selected
+    return st.session_state[state_key]
 
 
-def dataframe_to_html(df: pd.DataFrame, columns: List[str]) -> str:
-    """Render a lightweight HTML table matching the OSF-ish look."""
+def render_filters(entity_key: str, frame: pd.DataFrame) -> pd.DataFrame:
+    """Simple popover filters based on real columns present."""
+    filters = ENTITY_FILTERS.get(entity_key, [])
+    if not filters:
+        return frame
 
-    def cell(col: str, val: str) -> str:
-        v = "" if val is None else str(val)
-        if col == "osf_link":
-            guid = extract_osf_guid(v)
-            if guid:
-                url = make_osf_url(guid)
-                return f'<span class="osfi-link"><a href="{url}" target="_blank" rel="noopener">{guid}</a></span>'
-            url = make_osf_url(v)
-            return f'<span class="osfi-link"><a href="{url}" target="_blank" rel="noopener">link</a></span>' if url else ""
-        if col == "doi":
-            doi = normalize_doi(v)
-            if doi:
-                url = make_doi_url(doi)
-                return f'<span class="osfi-link"><a href="{url}" target="_blank" rel="noopener">{doi}</a></span>'
-            return ""
-        return v
+    with st.popover("Filters", use_container_width=False):
+        temp = frame
+        # resource_type
+        if "resource_type" in filters and "resource_type" in temp.columns:
+            opts = sorted([x for x in temp["resource_type"].unique().tolist() if str(x).strip() != ""])
+            sel = st.selectbox("Resource Type", options=["All"] + opts, index=0, key=f"{entity_key}_flt_resource_type")
+            if sel != "All":
+                temp = temp[temp["resource_type"] == sel]
 
-    cols = [c for c in columns if c in df.columns]
+        if "license" in filters and "license" in temp.columns:
+            opts = sorted([x for x in temp["license"].unique().tolist() if str(x).strip() != ""])
+            sel = st.selectbox("License", options=["All"] + opts, index=0, key=f"{entity_key}_flt_license")
+            if sel != "All":
+                temp = temp[temp["license"] == sel]
 
-    head = "".join([f"<th>{c.replace('_', ' ')}</th>" for c in cols])
-    body_rows = []
-    for _, r in df[cols].iterrows():
-        tds = "".join([f"<td>{cell(c, r.get(c, ''))}</td>" for c in cols])
-        body_rows.append(f"<tr>{tds}</tr>")
+        if "storage_region" in filters and "storage_region" in temp.columns:
+            opts = sorted([x for x in temp["storage_region"].unique().tolist() if str(x).strip() != ""])
+            sel = st.selectbox("Storage Region", options=["All"] + opts, index=0, key=f"{entity_key}_flt_region")
+            if sel != "All":
+                temp = temp[temp["storage_region"] == sel]
 
-    body = "".join(body_rows)
-    return (
-        '<div class="osfi-table-wrap">'
-        '<table class="osfi-table">'
-        f"<thead><tr>{head}</tr></thead>"
-        f"<tbody>{body}</tbody>"
-        "</table>"
-        "</div>"
+        return temp
+
+    return frame
+
+
+def add_link_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    out = frame.copy()
+
+    # OSF Link => markdown displaying GUID
+    if "osf_link" in out.columns:
+        def _osf_md(v: str) -> str:
+            guid = _extract_guid(v)
+            if not guid:
+                return ""
+            url = f"https://osf.io/{guid}/"
+            return f"[{guid}]({url})"
+        out["osf_link"] = out["osf_link"].apply(_osf_md)
+
+    # DOI => markdown displaying DOI (or blank)
+    if "doi" in out.columns:
+        def _doi_md(v: str) -> str:
+            d = str(v).strip()
+            if d == "" or d.lower() in {"none", "nan"}:
+                return ""
+            url = _doi_url(d)
+            # display bare DOI
+            d_disp = re.sub(r"^https?://(dx\.)?doi\.org/", "", d, flags=re.I)
+            return f"[{d_disp}]({url})"
+        out["doi"] = out["doi"].apply(_doi_md)
+
+    return out
+
+
+def render_table(entity_label: str, entity_key: str, frame: pd.DataFrame) -> None:
+    # Title
+    st.markdown(f'<div class="osfi-section-title">{len(frame)} {entity_label}</div>', unsafe_allow_html=True)
+
+    # Right aligned toolbar (Filters + Customize)
+    st.markdown('<div class="osfi-toolbar">', unsafe_allow_html=True)
+    toolbar_cols = st.columns([1, 1, 6], gap="small")
+    with toolbar_cols[0]:
+        filtered = render_filters(entity_key, frame)
+    with toolbar_cols[1]:
+        available = _available_columns(filtered, entity_key)
+        default_cols = available[:]  # start with all available by default
+        selected_cols = render_customize(entity_key, available_cols=available, default_cols=default_cols)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # Apply selection (ensure at least one)
+    if not selected_cols:
+        selected_cols = _available_columns(filtered, entity_key)[:1]
+
+    df_show = filtered[selected_cols].copy()
+
+    # Link formatting
+    df_show = add_link_columns(df_show)
+
+    # Pagination (below table)
+    page_size = st.session_state.get(f"{entity_key}_page_size", 25)
+    total = len(df_show)
+    pages = max(1, (total + page_size - 1) // page_size)
+    page = st.session_state.get(f"{entity_key}_page", 1)
+    page = max(1, min(page, pages))
+
+    start = (page - 1) * page_size
+    end = min(start + page_size, total)
+    page_df = df_show.iloc[start:end].reset_index(drop=True)
+
+    st.dataframe(
+        page_df,
+        hide_index=True,
+        use_container_width=True,
+        column_config={
+            "osf_link": st.column_config.MarkdownColumn("OSF Link"),
+            "doi": st.column_config.MarkdownColumn("DOI"),
+        },
     )
 
-
-def paginate(df: pd.DataFrame, entity_key: str, page_size: int = 25) -> Tuple[pd.DataFrame, int, int]:
-    total = len(df)
-    if total == 0:
-        return df, 1, 1
-
-    total_pages = max(1, (total + page_size - 1) // page_size)
-    page_key = f"{entity_key}_page"
-    if page_key not in st.session_state:
-        st.session_state[page_key] = 1
-
-    # Clamp
-    st.session_state[page_key] = max(1, min(total_pages, st.session_state[page_key]))
-
-    start = (st.session_state[page_key] - 1) * page_size
-    end = start + page_size
-    return df.iloc[start:end].copy(), st.session_state[page_key], total_pages
-
-
-def render_pagination_controls(entity_key: str, current_page: int, total_pages: int) -> None:
-    st.markdown('<div class="osfi-pagination">', unsafe_allow_html=True)
-    c1, c2, c3, c4 = st.columns([0.08, 0.08, 0.2, 0.64])
-
-    with c1:
-        if st.button("«", key=f"{entity_key}_first", disabled=current_page == 1):
+    # Pagination controls below
+    pag_cols = st.columns([2, 2, 2, 6])
+    with pag_cols[0]:
+        if st.button("‹ Prev", key=f"{entity_key}_prev", disabled=(page <= 1)):
+            st.session_state[f"{entity_key}_page"] = page - 1
+            st.rerun()
+    with pag_cols[1]:
+        st.markdown(f"Page **{page}** of **{pages}**")
+    with pag_cols[2]:
+        if st.button("Next ›", key=f"{entity_key}_next", disabled=(page >= pages)):
+            st.session_state[f"{entity_key}_page"] = page + 1
+            st.rerun()
+    with pag_cols[3]:
+        new_size = st.selectbox("Rows per page", options=[10, 25, 50, 100], index=[10,25,50,100].index(page_size) if page_size in [10,25,50,100] else 1, key=f"{entity_key}_page_size_select")
+        if new_size != page_size:
+            st.session_state[f"{entity_key}_page_size"] = new_size
             st.session_state[f"{entity_key}_page"] = 1
             st.rerun()
-    with c2:
-        if st.button("‹", key=f"{entity_key}_prev", disabled=current_page == 1):
-            st.session_state[f"{entity_key}_page"] = max(1, current_page - 1)
-            st.rerun()
-    with c3:
-        st.write(f"Page {current_page} of {total_pages}")
-    with c4:
-        if st.button("›", key=f"{entity_key}_next", disabled=current_page >= total_pages):
-            st.session_state[f"{entity_key}_page"] = min(total_pages, current_page + 1)
-            st.rerun()
 
+
+def render_summary(summary_row: pd.Series, projects: pd.DataFrame, registrations: pd.DataFrame, preprints: pd.DataFrame) -> None:
+    counts = compute_summary_counts(summary_row, projects, registrations, preprints)
+
+    # Summary cards in a 4x2 grid
+    cards = [
+        ("Total Users", int(counts["total_users"])),
+        ("Total Monthly Logged in Users", int(counts["monthly_logged_in_users"])),
+        ("Total Monthly Active Users", int(counts["monthly_active_users"])),
+        ("Projects", int(counts["projects"])),
+        ("Registrations", int(counts["registrations"])),
+        ("Preprints", int(counts["preprints"])),
+        ("Total Public File Count", int(counts["total_public_file_count"])),
+        ("Total Storage in GB", round(float(counts["total_storage_gb"]), 1)),
+    ]
+
+    # render grid
+    st.markdown('<div class="osfi-cards">', unsafe_allow_html=True)
+    for label, val in cards:
+        st.markdown(
+            f"""
+<div class="osfi-card">
+  <div class="osfi-card-label">{label}</div>
+  <div class="osfi-card-value">{val}</div>
+</div>
+""",
+            unsafe_allow_html=True,
+        )
     st.markdown("</div>", unsafe_allow_html=True)
 
 
-def render_entity_tab(entity_label: str, entity_key: str, df_entity: pd.DataFrame) -> None:
-    # Title
-    st.markdown(f"### {len(df_entity):,} {entity_label}")
-
-    # Filters + controls row
-    filtered, _ = build_filters(entity_key, df_entity)
-
-    # Per-tab columns (only show actual columns)
-    allowed_cols = [c for c in TAB_COLUMNS[entity_key] if c in df_entity.columns]
-    default_cols = allowed_cols
-
-    # Controls: Customize + Download are always available
-    c_controls = st.columns([0.7, 0.3])[1]
-    with c_controls:
-        st.markdown('<div class="osfi-controls">', unsafe_allow_html=True)
-        selected_cols = render_customize(entity_key, allowed_cols, default_cols)
-        csv_bytes = filtered[selected_cols].to_csv(index=False).encode("utf-8")
-        # Use new width API (Streamlit warning avoidance)
-        st.download_button(
-            "Download CSV",
-            data=csv_bytes,
-            file_name=f"{entity_key}s.csv",
-            mime="text/csv",
-            width="content",
-            key=f"{entity_key}_download",
-        )
-        st.markdown("</div>", unsafe_allow_html=True)
-
-    # Paginate + render table
-    page_df, page, pages = paginate(filtered, entity_key, page_size=25)
-    table_html = dataframe_to_html(page_df, selected_cols)
-    st.markdown(table_html, unsafe_allow_html=True)
-
-    # Pagination BELOW the table
-    render_pagination_controls(entity_key, page, pages)
-
-
-# -----------------------------------------------------------------------------
+# -----------------------------
 # App
-# -----------------------------------------------------------------------------
-
+# -----------------------------
 
 def main() -> None:
     st.set_page_config(page_title="Institutions Dashboard (Demo)", layout="wide")
     inject_css()
 
-    # No upload widget; expect a repo-local CSV.
-    data_path = Path(__file__).parent / DEFAULT_DATA_FILE
-    if not data_path.exists():
-        st.error(
-            "Dashboard data CSV not found. "
-            f"Expected to find '{DEFAULT_DATA_FILE}' next to dashboard.py in the repository."
-        )
+    data_path = Path(DEFAULT_DATA_FILE)
+    try:
+        _, branding, summary_row, projects, registrations, preprints = load_data(str(data_path))
+    except Exception as e:
+        st.error(str(e))
         st.stop()
-
-    _, branding, summary, projects, registrations, preprints = load_data(str(data_path))
 
     render_branding(branding)
 
-    tabs = st.tabs(["Summary", "Projects", "Registrations", "Preprints"])
+    tab_summary, tab_projects, tab_regs, tab_preprints = st.tabs(TABS)
 
-    with tabs[0]:
-        render_summary(summary)
+    with tab_summary:
+        render_summary(summary_row, projects, registrations, preprints)
 
-    with tabs[1]:
-        render_entity_tab("Projects", "project", projects)
+    with tab_projects:
+        render_table("Projects", "project", projects)
 
-    with tabs[2]:
-        render_entity_tab("Registrations", "registration", registrations)
+    with tab_regs:
+        render_table("Registrations", "registration", registrations)
 
-    with tabs[3]:
-        render_entity_tab("Preprints", "preprint", preprints)
+    with tab_preprints:
+        render_table("Preprints", "preprint", preprints)
 
 
 if __name__ == "__main__":
