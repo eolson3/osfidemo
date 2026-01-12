@@ -337,7 +337,7 @@ def render_summary(df: pd.DataFrame, summary_row: pd.Series):
 
     # Metric cards grid
     cards = [
-        ("Total Users", summary_total_users),
+        ("Total Users", total_users),
         ("Total Monthly Logged in Users", monthly_logged_in),
         ("Total Monthly Active Users", monthly_active),
         ("OSF Public and Private Projects", projects_public + projects_private),
