@@ -8,7 +8,7 @@ import streamlit as st
 # -----------------------------
 # Configuration
 # -----------------------------
-DEFAULT_DATA_FILE = "osfi_dashboard_data.csv"
+DEFAULT_DATA_FILE = "osfi_dashboard_data_v2_no_users_tab.csv"
 
 # Approximate OSF Institutions dashboard styling from screenshots
 CSS = """
@@ -31,30 +31,12 @@ html, body, [data-testid="stAppViewContainer"]{
   padding-top: 1.2rem;
   max-width: 1280px;
 }
-/* Branding bar: logo must never blow up */
 .osfi-brand{
-  display:flex;
-  align-items:center;
-  justify-content:flex-start;
-  gap:16px;
+  display:flex; align-items:center; gap:16px;
   margin: 6px 0 14px 0;
-  min-height: 72px;
 }
-.osfi-brand .osfi-brand-logo{
-  flex: 0 0 auto;
-  width: 56px;
-  height: 56px;
-  display:flex;
-  align-items:center;
-  justify-content:center;
-}
-.osfi-brand .osfi-brand-logo img{
-  width: 44px;
-  height: 44px;
-  max-width: 44px;
-  max-height: 44px;
-  object-fit: contain;
-  display:block;
+.osfi-brand img{
+  width:56px; height:56px; object-fit:contain;
 }
 .osfi-brand .title{
   font-size: 36px; font-weight: 750; color: var(--text);
@@ -154,13 +136,22 @@ def load_data(path: str) -> tuple[pd.DataFrame, pd.Series]:
 
 def _to_int(x: str) -> int:
     try:
-        return int(float(str(x).strip() or 0))
+        s = str(x).strip()
+        if not s:
+            return 0
+        # tolerate thousands separators
+        s = s.replace(",", "")
+        return int(float(s))
     except Exception:
         return 0
 
 def _to_float(x: str) -> float:
     try:
-        return float(str(x).strip() or 0.0)
+        s = str(x).strip()
+        if not s:
+            return 0.0
+        s = s.replace(",", "")
+        return float(s)
     except Exception:
         return 0.0
 
@@ -266,54 +257,37 @@ def render_branding(summary_row: pd.Series):
     logo = str(summary_row.get("branding_institution_logo_url", "")).strip()
     report_month = str(summary_row.get("report_month", "")).strip() or str(summary_row.get("report_yearmonth", "")).strip()
 
-    # Always render a constrained logo; fall back to COS logo if branding URL is missing.
-    logo_url = logo or "https://osf.io/static/img/cos.svg"
-    subtitle = f"Institutions Dashboard (Demo){(' • Report month: ' + report_month) if report_month else ''}"
+    st.markdown("<div class='osfi-brand'>", unsafe_allow_html=True)
+    if logo:
+        st.markdown(f"<img src='{logo}' alt='logo'/>", unsafe_allow_html=True)
     st.markdown(
-        """
-        <div class="osfi-brand">
-          <div class="osfi-brand-logo">
-            <img class="osfi-brand-logo-img" src="{logo_url}" alt="logo" loading="eager" referrerpolicy="no-referrer" />
-          </div>
-          <div class="osfi-brand-text">
-            <div class="title">{name}</div>
-            <div class="subtitle">{subtitle}</div>
-          </div>
-        </div>
-        """.format(logo_url=logo_url, name=name, subtitle=subtitle),
+        f"<div><div class='title'>{name}</div>"
+        f"<div class='subtitle'>Institutions Dashboard (Demo){(' • Report month: ' + report_month) if report_month else ''}</div></div>",
         unsafe_allow_html=True,
     )
+    st.markdown("</div>", unsafe_allow_html=True)
 
 def render_summary(df: pd.DataFrame, summary_row: pd.Series):
-    def _first_int(keys, default: int = 0) -> int:
-        """Return the first non-empty summary_row value (as int) from keys."""
+    def _summary_int(*keys: str, default: int = 0) -> int:
+        """Return first non-empty summary value among keys, coerced to int."""
         for k in keys:
-            if k in summary_row.index:
-                v = summary_row.get(k, "")
-                if str(v).strip() != "":
-                    return _to_int(v)
+            v = summary_row.get(k, "")
+            if str(v).strip() != "":
+                return _to_int(v)
         return default
 
-    # Totals that must be computed from tables
-    preprints_total = (df["row_type"] == "preprint").sum()
-    # Prefer summary-row totals when available (more reliable than per-row aggregation).
-    public_file_count_from_summary = _first_int(
-        [
-            "summary_public_file_count",
-            "summary_public_file_total",
-            "public_file_total",
-            "public_file_count_total",
-            "total_public_file_count",
-        ],
-        default=0,
-    )
-    public_file_count_from_rows = (
+    # Totals computable from tables
+    preprints_total = int((df["row_type"] == "preprint").sum())
+    computed_public_files = (
         df.loc[df["row_type"].isin(["project", "registration", "preprint"]), "public_file_count"].apply(_to_int).sum()
         if "public_file_count" in df.columns
         else 0
     )
-    public_file_count = public_file_count_from_summary or public_file_count_from_rows
-    storage_gb_total = df.loc[df["row_type"].isin(["project", "registration", "preprint"]), "storage_gb"].apply(_to_float).sum() if "storage_gb" in df.columns else 0.0
+    storage_gb_total = (
+        df.loc[df["row_type"].isin(["project", "registration", "preprint"]), "storage_gb"].apply(_to_float).sum()
+        if "storage_gb" in df.columns
+        else 0.0
+    )
 
     # Totals that must come from summary write-ins (privacy-sensitive)
     projects_public = _to_int(summary_row.get("projects_public_count", "0"))
@@ -321,19 +295,11 @@ def render_summary(df: pd.DataFrame, summary_row: pd.Series):
     regs_public = _to_int(summary_row.get("registrations_public_count", "0"))
     regs_embargo = _to_int(summary_row.get("registrations_embargoed_count", "0"))
 
-    # Other summary metrics
-    total_users = _first_int(
-        [
-            "summary_total_users",
-            "total_users",
-            "users_total",
-            "summary_user_count",
-            "summary_users_total",
-        ],
-        default=0,
-    )
-    monthly_logged_in = _to_int(summary_row.get("summary_monthly_logged_in_users", "0"))
-    monthly_active = _to_int(summary_row.get("summary_monthly_active_users", "0"))
+    # Other summary metrics (write-ins)
+    total_users = _summary_int("summary_total_users", "total_users", default=0)
+    monthly_logged_in = _summary_int("summary_monthly_logged_in_users", "monthly_logged_in_users", default=0)
+    monthly_active = _summary_int("summary_monthly_active_users", "monthly_active_users", default=0)
+    public_file_count = _summary_int("summary_public_file_count", "public_file_count_total", default=computed_public_files)
 
     # Metric cards grid
     cards = [
