@@ -8,7 +8,7 @@ import streamlit as st
 # -----------------------------
 # Configuration
 # -----------------------------
-DEFAULT_DATA_FILE = "osfi_dashboard_data.csv"
+DEFAULT_DATA_FILE = "osfi_dashboard_data_v2_no_users_tab.csv"
 
 # Approximate OSF Institutions dashboard styling from screenshots
 CSS = """
@@ -285,9 +285,34 @@ def render_branding(summary_row: pd.Series):
     )
 
 def render_summary(df: pd.DataFrame, summary_row: pd.Series):
+    def _first_int(keys, default: int = 0) -> int:
+        """Return the first non-empty summary_row value (as int) from keys."""
+        for k in keys:
+            if k in summary_row.index:
+                v = summary_row.get(k, "")
+                if str(v).strip() != "":
+                    return _to_int(v)
+        return default
+
     # Totals that must be computed from tables
     preprints_total = (df["row_type"] == "preprint").sum()
-    public_file_count = df.loc[df["row_type"].isin(["project", "registration", "preprint"]), "public_file_count"].apply(_to_int).sum() if "public_file_count" in df.columns else 0
+    # Prefer summary-row totals when available (more reliable than per-row aggregation).
+    public_file_count_from_summary = _first_int(
+        [
+            "summary_public_file_count",
+            "summary_public_file_total",
+            "public_file_total",
+            "public_file_count_total",
+            "total_public_file_count",
+        ],
+        default=0,
+    )
+    public_file_count_from_rows = (
+        df.loc[df["row_type"].isin(["project", "registration", "preprint"]), "public_file_count"].apply(_to_int).sum()
+        if "public_file_count" in df.columns
+        else 0
+    )
+    public_file_count = public_file_count_from_summary or public_file_count_from_rows
     storage_gb_total = df.loc[df["row_type"].isin(["project", "registration", "preprint"]), "storage_gb"].apply(_to_float).sum() if "storage_gb" in df.columns else 0.0
 
     # Totals that must come from summary write-ins (privacy-sensitive)
@@ -297,7 +322,16 @@ def render_summary(df: pd.DataFrame, summary_row: pd.Series):
     regs_embargo = _to_int(summary_row.get("registrations_embargoed_count", "0"))
 
     # Other summary metrics
-    total_users = _to_int(summary_row.get("summary_total_users", "0"))
+    total_users = _first_int(
+        [
+            "summary_total_users",
+            "total_users",
+            "users_total",
+            "summary_user_count",
+            "summary_users_total",
+        ],
+        default=0,
+    )
     monthly_logged_in = _to_int(summary_row.get("summary_monthly_logged_in_users", "0"))
     monthly_active = _to_int(summary_row.get("summary_monthly_active_users", "0"))
 
