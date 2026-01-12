@@ -8,7 +8,7 @@ import streamlit as st
 # -----------------------------
 # Configuration
 # -----------------------------
-DEFAULT_DATA_FILE = "osfi_dashboard_data.csv"
+DEFAULT_DATA_FILE = "osfi_dashboard_data_v2_no_users_tab.csv"
 
 # Approximate OSF Institutions dashboard styling from screenshots
 CSS = """
@@ -36,7 +36,7 @@ html, body, [data-testid="stAppViewContainer"]{
   margin: 6px 0 14px 0;
 }
 .osfi-brand img{
-  width:56px; height:56px; object-fit:contain;
+  width:44px !important; height:44px !important; max-width:44px !important; max-height:44px !important; border-radius:8px; object-fit:contain;
 }
 .osfi-brand .title{
   font-size: 36px; font-weight: 750; color: var(--text);
@@ -138,12 +138,12 @@ def _to_int(x: str) -> int:
     try:
         s = str(x).strip()
         if not s:
-            return 0
+            return default
         # tolerate thousands separators
         s = s.replace(",", "")
         return int(float(s))
     except Exception:
-        return 0
+        return default
 
 def _to_float(x: str) -> float:
     try:
@@ -259,7 +259,7 @@ def render_branding(summary_row: pd.Series):
 
     st.markdown("<div class='osfi-brand'>", unsafe_allow_html=True)
     if logo:
-        st.markdown(f"<img src='{logo}' alt='logo'/>", unsafe_allow_html=True)
+        st.markdown(f"<img src='{logo}' alt='logo' style='width:44px;height:44px;max-width:44px;max-height:44px;object-fit:contain;'/>", unsafe_allow_html=True)
     st.markdown(
         f"<div><div class='title'>{name}</div>"
         f"<div class='subtitle'>Institutions Dashboard (Demo){(' • Report month: ' + report_month) if report_month else ''}</div></div>",
@@ -300,6 +300,8 @@ def render_summary(df: pd.DataFrame, summary_row: pd.Series):
     monthly_logged_in = _summary_int("summary_monthly_logged_in_users", "monthly_logged_in_users", default=0)
     monthly_active = _summary_int("summary_monthly_active_users", "monthly_active_users", default=0)
     public_file_count = _summary_int("summary_public_file_count", "public_file_count_total", default=computed_public_files)
+    if public_file_count == 0 and computed_public_files:
+        public_file_count = computed_public_files
 
     # Metric cards grid
     cards = [
