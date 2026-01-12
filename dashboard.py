@@ -8,7 +8,7 @@ import streamlit as st
 # -----------------------------
 # Configuration
 # -----------------------------
-DEFAULT_DATA_FILE = "osfi_dashboard_data_v2_no_users_tab.csv"
+DEFAULT_DATA_FILE = "osfi_dashboard_data.csv"
 
 # Approximate OSF Institutions dashboard styling from screenshots
 CSS = """
