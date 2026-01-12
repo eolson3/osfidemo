@@ -1,8 +1,5 @@
 import math
 from pathlib import Path
-import base64
-from urllib.request import Request, urlopen
-from urllib.error import URLError
 
 import altair as alt
 import pandas as pd
@@ -11,7 +8,7 @@ import streamlit as st
 # -----------------------------
 # Configuration
 # -----------------------------
-DEFAULT_DATA_FILE = "osfi_dashboard_data.csv"
+DEFAULT_DATA_FILE = "osfi_dashboard_data_v2_no_users_tab.csv"
 
 # Approximate OSF Institutions dashboard styling from screenshots
 CSS = """
@@ -34,12 +31,30 @@ html, body, [data-testid="stAppViewContainer"]{
   padding-top: 1.2rem;
   max-width: 1280px;
 }
+/* Branding bar: logo must never blow up */
 .osfi-brand{
-  display:flex; align-items:center; gap:16px;
+  display:flex;
+  align-items:center;
+  justify-content:flex-start;
+  gap:16px;
   margin: 6px 0 14px 0;
+  min-height: 72px;
 }
-.osfi-brand img{
-  width:56px; height:56px; object-fit:contain;
+.osfi-brand .osfi-brand-logo{
+  flex: 0 0 auto;
+  width: 56px;
+  height: 56px;
+  display:flex;
+  align-items:center;
+  justify-content:center;
+}
+.osfi-brand .osfi-brand-logo img{
+  width: 44px;
+  height: 44px;
+  max-width: 44px;
+  max-height: 44px;
+  object-fit: contain;
+  display:block;
 }
 .osfi-brand .title{
   font-size: 36px; font-weight: 750; color: var(--text);
@@ -247,72 +262,27 @@ def chart_bar_top10(df: pd.DataFrame, col: str, title: str):
 # Pages
 # -----------------------------
 def render_branding(summary_row: pd.Series):
-    """Render the header/branding block.
-
-    We avoid relying on <img src=...> inside HTML because Streamlit deployments may apply CSP rules
-    that prevent the browser from directly loading external images, particularly SVGs.
-    Instead we fetch the logo server-side when possible and fall back to an embedded SVG.
-    """
-
     name = str(summary_row.get("branding_institution_name", "")).strip() or "Institution"
-    logo_url = str(summary_row.get("branding_institution_logo_url", "")).strip()
-    report_month = (
-        str(summary_row.get("report_month", "")).strip()
-        or str(summary_row.get("report_yearmonth", "")).strip()
+    logo = str(summary_row.get("branding_institution_logo_url", "")).strip()
+    report_month = str(summary_row.get("report_month", "")).strip() or str(summary_row.get("report_yearmonth", "")).strip()
+
+    # Always render a constrained logo; fall back to COS logo if branding URL is missing.
+    logo_url = logo or "https://osf.io/static/img/cos.svg"
+    subtitle = f"Institutions Dashboard (Demo){(' • Report month: ' + report_month) if report_month else ''}"
+    st.markdown(
+        """
+        <div class="osfi-brand">
+          <div class="osfi-brand-logo">
+            <img class="osfi-brand-logo-img" src="{logo_url}" alt="logo" loading="eager" referrerpolicy="no-referrer" />
+          </div>
+          <div class="osfi-brand-text">
+            <div class="title">{name}</div>
+            <div class="subtitle">{subtitle}</div>
+          </div>
+        </div>
+        """.format(logo_url=logo_url, name=name, subtitle=subtitle),
+        unsafe_allow_html=True,
     )
-
-    COS_SVG = (
-        "<?xml version='1.0' encoding='UTF-8'?>"
-        "<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'>"
-        "<circle cx='32' cy='32' r='30' fill='#2d6cc0'/>"
-        "<circle cx='32' cy='32' r='16' fill='#ffffff' opacity='0.9'/>"
-        "<circle cx='32' cy='32' r='7' fill='#2d6cc0'/>"
-        "</svg>"
-    ).encode("utf-8")
-
-    def _fetch_bytes(url: str) -> bytes | None:
-        if not url:
-            return None
-        try:
-            req = Request(url, headers={"User-Agent": "Mozilla/5.0"})
-            with urlopen(req, timeout=10) as resp:
-                return resp.read()
-        except URLError:
-            return None
-        except Exception:
-            return None
-
-    logo_bytes = _fetch_bytes(logo_url) if logo_url else None
-    if not logo_bytes and logo_url:
-        # Some servers block unknown agents; try one more time with minimal headers.
-        logo_bytes = _fetch_bytes(logo_url)
-    if not logo_bytes:
-        logo_bytes = COS_SVG
-
-    # Layout using Streamlit columns; CSS handles spacing and font styling.
-    left, right = st.columns([0.08, 0.92], gap="small")
-    with left:
-        # Streamlit's image renderer can be finicky with SVG bytes; handle SVG explicitly.
-        try:
-            if b"<svg" in logo_bytes[:500].lower():
-                b64 = base64.b64encode(logo_bytes).decode("ascii")
-                st.markdown(
-                    f"<img src='data:image/svg+xml;base64,{b64}' width='44' height='44' alt='logo' />",
-                    unsafe_allow_html=True,
-                )
-            else:
-                st.image(logo_bytes, width=44)
-        except Exception:
-            st.markdown("<div class='osfi-logo-fallback'>COS</div>", unsafe_allow_html=True)
-
-    with right:
-        st.markdown(
-            f"<div class='osfi-brand-text'>"
-            f"<div class='title'>{name}</div>"
-            f"<div class='subtitle'>Institutions Dashboard (Demo){(' • Report month: ' + report_month) if report_month else ''}</div>"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
 
 def render_summary(df: pd.DataFrame, summary_row: pd.Series):
     # Totals that must be computed from tables
